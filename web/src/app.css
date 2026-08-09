@@ -1,0 +1,131 @@
+/* The four map colors come from map_cover.py through export_data.py — never write them
+   down here. Everything below is the app's own paper: tones that exist on the page and
+   nowhere on the drawn map. */
+@import './generated/tokens.css';
+
+:root {
+	--panel: #f6eeda; /* cards, buttons, the profile */
+	--rule: #ceba98; /* every hairline border */
+	--plate: #f6edd8; /* behind a label on the map */
+	--pressed: #f0e2c4; /* the picked tour in the list */
+	color-scheme: light;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--paper);
+	color: var(--ink);
+	font-family: Georgia, 'Times New Roman', serif;
+	/* viewport-fit=cover: installed on a phone the page runs under the notch */
+	padding: env(safe-area-inset-top) calc(24px + env(safe-area-inset-right))
+		calc(72px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+}
+
+a {
+	color: var(--accent);
+}
+
+.wrap {
+	max-width: 1100px;
+	margin: 0 auto;
+}
+
+nav {
+	border-bottom: 2px solid var(--accent);
+	padding: 20px 0 14px;
+	margin-bottom: 40px;
+}
+nav ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	gap: 34px;
+	flex-wrap: wrap;
+}
+nav > .wrap > ul > li > a {
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	text-decoration: none;
+	font-size: 0.95rem;
+}
+nav a[aria-current] {
+	color: var(--ink);
+	border-bottom: 2px solid var(--accent);
+}
+nav ul ul {
+	display: block;
+	margin: 6px 0 0;
+}
+nav ul ul a {
+	font-size: 0.82rem;
+	font-style: italic;
+	color: var(--muted);
+}
+
+h1 {
+	margin: 0 0 12px;
+	font-size: 2.1rem;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+h2 {
+	margin: 18px 0 6px;
+	font-size: 1.25rem;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+}
+.lead {
+	margin: 0 0 40px;
+	color: var(--muted);
+	font-style: italic;
+	max-width: 46em;
+}
+
+.grid {
+	display: grid;
+	gap: 32px;
+	justify-content: center;
+	grid-template-columns: repeat(auto-fit, minmax(320px, 520px));
+}
+
+table {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 0 0 32px;
+}
+th,
+td {
+	text-align: left;
+	padding: 7px 12px 7px 0;
+	border-bottom: 1px solid var(--rule);
+	font-size: 0.95rem;
+}
+th {
+	color: var(--muted);
+	font-weight: normal;
+	font-style: italic;
+}
+td img {
+	vertical-align: middle;
+	width: 34px;
+	height: 34px;
+}
+
+footer {
+	border-top: 1px solid var(--rule);
+	margin-top: 56px;
+	padding-top: 14px;
+	font-size: 0.85rem;
+	color: var(--muted);
+}
+
+.noscript {
+	max-width: 1100px;
+	margin: 0 auto;
+	padding: 24px 0;
+}

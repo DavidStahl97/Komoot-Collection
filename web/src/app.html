@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<!-- viewport-fit=cover: installed on a phone the page runs under the notch -->
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<link
+			rel="icon"
+			href="%sveltekit.assets%/pwa/icon-192.png"
+			type="image/png"
+			sizes="192x192"
+		/>
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/pwa/apple-touch-icon.png" />
+		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="komoot maps" />
+		<meta name="mobile-web-app-capable" content="yes" />
+		<style>
+			/* The label fonts export_data.py copies next to the site — but only those whose
+			   licence sat beside them. A face whose file never arrives simply does not apply
+			   and the fallback in the same declaration takes over, exactly as the renderer
+			   falls back to DejaVu or Georgia. */
+			@font-face {
+				font-family: 'map-label';
+				font-style: italic;
+				font-display: swap;
+				src: url('%sveltekit.assets%/fonts/Lora-Italic-Variable.ttf') format('truetype');
+			}
+			@font-face {
+				font-family: 'map-place';
+				font-style: normal;
+				font-display: swap;
+				src: url('%sveltekit.assets%/fonts/Poppins-Medium.ttf') format('truetype');
+			}
+		</style>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<noscript>
+			<div class="noscript">
+				<h1>Maps for komoot collections</h1>
+				<p>
+					This is a single-page app and needs JavaScript. The cover images themselves do
+					not — they are ordinary PNGs and can be opened directly:
+					<a href="%sveltekit.assets%/data/index.json">the list of collections</a> names
+					the file of each one, below <code>covers/</code>.
+				</p>
+			</div>
+		</noscript>
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>
