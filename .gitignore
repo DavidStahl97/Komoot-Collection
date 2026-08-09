@@ -8,3 +8,6 @@ __pycache__/
 
 # generierte Karten
 out/
+
+# generierte Seite
+site/

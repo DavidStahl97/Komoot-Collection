@@ -1,0 +1,83 @@
+name: Karten
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Laufende Builds derselben Referenz abloesen; die Pages-Veroeffentlichung nicht.
+concurrency:
+  group: karten-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  karten:
+    name: Karten rendern
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Abhaengigkeiten
+        run: pip install pillow numpy
+
+      - name: Schriften laden
+        # Lora und Poppins liegen nicht in den Ubuntu-Paketen. Schlaegt der Download
+        # fehl, weicht map_cover.py auf DejaVu/Liberation aus — das Layout bleibt.
+        run: |
+          dir=/usr/share/fonts/truetype/google-fonts
+          sudo mkdir -p "$dir"
+          base=https://github.com/google/fonts/raw/main/ofl
+          get() { sudo curl -fsSL --retry 3 -o "$dir/$2" "$1" || echo "Schrift fehlt: $2"; }
+          get "$base/lora/Lora-Italic%5Bwght%5D.ttf" Lora-Italic-Variable.ttf
+          get "$base/poppins/Poppins-Medium.ttf" Poppins-Medium.ttf
+          get "$base/poppins/Poppins-Bold.ttf" Poppins-Bold.ttf
+          fc-cache -f > /dev/null
+
+      - name: Karten erzeugen
+        run: python3 map_cover.py --out out
+
+      - name: Seite bauen
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          BUILD_DATE=$(date -u +%d.%m.%Y) python3 build_site.py --png out --out site
+
+      - name: Karten und Motive als Artefakt
+        # Im Pull Request die Bilder zum Ansehen — es gibt keine Tests, das Bild ist die Pruefung.
+        uses: actions/upload-artifact@v4
+        with:
+          name: collection-icons
+          path: |
+            out/*.png
+            site/icons/*.png
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Seite als Pages-Artefakt
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  pages:
+    name: GitHub Page veroeffentlichen
+    if: github.event_name != 'pull_request'
+    needs: karten
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -20,6 +20,12 @@ Kollisionsprüfung. Wer nur an einer Collection arbeitet, hängt ihren Ordnernam
 (`python3 map_cover.py brandy-haiger`); wer am gemeinsamen Layout dreht, prüft alle, denn
 jede Collection hat einen anderen Kartenausschnitt.
 
+Für die Seite gilt dasselbe: `python3 build_site.py` läuft nach `map_cover.py` und schreibt
+`site/`. Geprüft ist eine Änderung erst, wenn `site/index.html` im Browser angesehen wurde —
+Home, eine Collection-Unterseite und die Icon-Liste. Der Workflow
+`.github/workflows/karten.yml` macht beides in CI: im Pull Request als Artefakt
+`collection-icons`, auf `main` als GitHub Page.
+
 Zielverzeichnis und Fonts sind nicht mehr hart verdrahtet: `out/` wird angelegt, wenn es
 fehlt, und `F(...)` weicht auf DejaVu bzw. Liberation aus, wenn die Google-Fonts fehlen.
 Ein Lauf auf einer fremden Maschine sagt darum nichts über die endgültige Typografie —
@@ -67,6 +73,13 @@ Tragende Konzepte:
 - **Determinismus.** Alle `random.Random(...)` haben feste Seeds (7, 11, 41, 23) und werden
   in `render` neu gesetzt, damit die Reihenfolge der Collections das Bild nicht beeinflusst.
   Seeds nur bewusst ändern; sie sind die Stellschraube für die Streuung, nicht Rauschen.
+
+`build_site.py` hängt an derselben Konfiguration: es importiert `discover`, `read_config`,
+`slugify` und `PAPER` aus `map_cover.py`, statt Pfade oder Farben zu wiederholen. Die
+Motivliste der Icon-Seite kommt nicht aus einer Aufzählung, sondern aus der Signatur —
+jede Funktion in `icons.py`, deren erste vier Parameter `d, x, y, s` heißen, ist ein Motiv;
+`poly` und `circ` fallen dadurch heraus. Gestempelt wird groß und dann auf das tatsächlich
+Gezeichnete beschnitten, weil die Motive unterschiedlich weit über ihren Radius hinausgehen.
 
 `icons.py` enthält ausschließlich die Motive. Jedes folgt der Signatur `fn(d, x, y, s)` mit
 `s` als Radius-Maßstab — der Aufrufer übergibt bereits `*S`, in der Icon-Funktion also
