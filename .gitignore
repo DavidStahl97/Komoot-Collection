@@ -1,4 +1,4 @@
-# Ausgabebilder
+# rendered images
 *.png
 !doc/*.png
 
@@ -6,8 +6,8 @@ __pycache__/
 *.pyc
 .venv/
 
-# generierte Karten
+# generated maps
 out/
 
-# generierte Seite
+# generated site
 site/

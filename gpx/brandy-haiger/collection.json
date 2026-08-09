@@ -1,6 +1,6 @@
 {
   "name": "Brandy <-> Haiger",
-  "output": "brandy-haiger-karte.png",
+  "output": "brandy-haiger.png",
   "title": ["BRANDY", "HAIGER"],
   "arrow": true,
   "subtitle": ["Wege durch das", "Lahn-Dill-Bergland"],
