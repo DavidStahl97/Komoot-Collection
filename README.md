@@ -34,8 +34,11 @@ Jeder Lauf erzeugt exakt dasselbe Bild — alle Zufallszahlen haben feste Seeds.
 |---|---|
 | `map_cover.py` | Findet die Collections und baut jede Karte, von oben nach unten in Schichten. |
 | `icons.py` | Die gezeichneten Motive: Fuchs, See, Windräder-Berg, Radweg, Fluss, idyllischer Weg, Dill, Grube, Hai, Haus im Wald. |
+| `build_site.py` | Baut aus den erzeugten Karten die GitHub-Page: Home, Collections, Icons. |
 | `gpx/<collection>/` | Ein Ordner je Collection: die GPX-Exporte und optional eine `collection.json`. Ohne sie läuft nichts. |
 | `out/` | Die erzeugten PNGs. Nicht eingecheckt. |
+| `site/` | Die erzeugte Seite. Nicht eingecheckt. |
+| `.github/workflows/karten.yml` | Rendert bei jedem Push und Pull Request, hängt die Bilder an den PR und veröffentlicht die Seite. |
 
 ## Eine neue Collection anlegen
 
@@ -131,6 +134,36 @@ nicht — Bild ansehen und nachjustieren.
 Ein neues Motiv wird eine Funktion in `icons.py` nach dem Muster `fn(d, x, y, s)`,
 wobei `s` der Radius-Maßstab ist; ihr Name ist der Wert von `"icon"`. `poly`,
 `circ` und `tree` stehen als Bausteine bereit.
+
+## GitHub Actions und die Seite
+
+`.github/workflows/karten.yml` läuft bei jedem Push auf `main` und bei jedem Pull
+Request. Beide Male werden die Karten gerendert und die Seite gebaut:
+
+- **Im Pull Request** hängen die Bilder als Artefakt `collection-icons` am Lauf —
+  die Titelbilder aus `out/` und jedes einzelne Motiv aus `icons.py`. Weil es keine
+  Tests gibt, ist das Herunterladen und Ansehen dieses Artefakts die Prüfung.
+- **Auf `main`** wird die Seite zusätzlich über GitHub Pages veröffentlicht. Dafür
+  muss in den Repo-Einstellungen unter *Pages* als Quelle *GitHub Actions* gewählt
+  sein; der Workflow braucht keine weiteren Secrets.
+
+Die Seite hat drei Bereiche: **Home** listet alle Collections mit ihrem Titelbild,
+**Collections** führt zu je einer Unterseite pro Collection (großes Bild, Touren,
+Highlights mit Motiv), **Icons** zeigt alle Motive aus `icons.py` mit ihrem
+Funktionsnamen — also mit dem Wert, der als `"icon"` in die `collection.json` gehört.
+Lokal:
+
+```bash
+python3 map_cover.py --out out
+python3 build_site.py --png out --out site
+```
+
+Neue Motive und neue Collections tauchen von allein auf: `build_site.py` sammelt die
+Collections über `discover()` und die Motive über die Signatur `fn(d, x, y, s)`.
+
+Lora und Poppins fehlen den GitHub-Runnern; der Workflow lädt sie vor dem Rendern
+nach. Schlägt das fehl, greift der Fallback auf DejaVu/Liberation — die Karte
+entsteht trotzdem, nur die Schrift sieht anders aus.
 
 ## Woran man drehen kann
 
