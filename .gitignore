@@ -1,0 +1,7 @@
+# Ausgabebilder
+*.png
+!doc/*.png
+
+__pycache__/
+*.pyc
+.venv/
