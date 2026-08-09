@@ -42,14 +42,25 @@ FONT_FALLBACK = {"Lora-Italic-Variable": ["DejaVuSerif-Italic", "LiberationSerif
                                   "calibrib", "arialbd"]}
 
 
-def F(name, size):
-    """Load a font; fall back to a system font when the Google fonts are missing."""
+def font_file(name):
+    """Path of the font actually used for `name`, or None when nothing was found.
+
+    build_site.py ships this very file with the site, so the labels drawn as SVG use
+    the same typeface as the ones drawn into the PNG — including the fallback, which
+    is why it returns the resolved path instead of the requested name.
+    """
     for cand in [name] + FONT_FALLBACK.get(name, []):
         for dirn in FONT_DIRS:
             p = os.path.join(dirn, cand + ".ttf")
             if dirn and os.path.exists(p):
-                return ImageFont.truetype(p, int(size * S))
-    return ImageFont.load_default(int(size * S))
+                return p
+    return None
+
+
+def F(name, size):
+    """Load a font; fall back to a system font when the Google fonts are missing."""
+    p = font_file(name)
+    return ImageFont.truetype(p, int(size * S)) if p else ImageFont.load_default(int(size * S))
 
 
 # --------------------------------------------------------------- GPX helpers
@@ -62,6 +73,27 @@ def load(path):
     if not pts:
         raise ValueError("no track points in %s" % path)
     return np.array(pts)
+
+
+def elevation(path):
+    """Metres per track point — same order and length as load(), None without <ele>.
+
+    Kept apart from load() on purpose: cum, seg, at and projection all read the array as
+    two columns, and widening it would put a third one under four working functions for
+    the sake of one page. A single missing value drops the whole profile, because a track
+    that is half measured and half interpolated is worse than none.
+    """
+    r = ET.parse(path).getroot()
+    pts = list(r.iter(NS + 'trkpt'))
+    if not pts:
+        pts = [t for t in r.iter() if t.tag.endswith('trkpt') or t.tag.endswith('rtept')]
+    out = []
+    for t in pts:
+        e = next((c for c in t if c.tag.endswith('ele')), None)
+        if e is None or not (e.text or '').strip():
+            return None
+        out.append(float(e.text))
+    return np.array(out) if out else None
 
 
 def cum(a):
@@ -136,7 +168,7 @@ def read_config(folder):
     files = sorted(f for f in os.listdir(folder) if f.lower().endswith('.gpx'))
     entries = cfg.get('routes') or [{'key': os.path.splitext(f)[0], 'file': f} for f in files]
 
-    routes, order, labels, sources = {}, [], {}, {}
+    routes, order, labels, sources, eles = {}, [], {}, {}, {}
     for e in entries:
         if isinstance(e, str):
             e = {'key': os.path.splitext(e)[0], 'file': e}
@@ -145,6 +177,7 @@ def read_config(folder):
             raise FileNotFoundError("%s: missing GPX: %s" % (cfg['name'], e['file']))
         key = e.get('key') or os.path.splitext(e['file'])[0]
         routes[key] = load(fp)
+        eles[key] = elevation(fp)
         order.append(key)
         labels[key] = e.get('label') or pretty(e['file'])
         sources[key] = e['file']
@@ -153,13 +186,15 @@ def read_config(folder):
     for f in files:                               # draw unconfigured GPX as well
         if f not in known:
             key = os.path.splitext(f)[0]
-            routes[key] = load(os.path.join(folder, f)); order.append(key)
+            fp = os.path.join(folder, f)
+            routes[key] = load(fp); eles[key] = elevation(fp); order.append(key)
             labels[key] = pretty(f); sources[key] = f
 
     cfg['_routes'] = routes
     cfg['_order'] = order
     cfg['_labels'] = labels                       # tour name for the site, keyed by route key
     cfg['_files'] = sources
+    cfg['_ele'] = eles                            # metres per track point, or None
     return cfg
 
 
@@ -208,8 +243,51 @@ def projection(routes, box):
     return P, PA
 
 
+def bg_name(output):
+    """File name of the background variant belonging to a cover image."""
+    stem, ext = os.path.splitext(output)
+    return stem + '-bg' + (ext or '.png')
+
+
+def cartouche_box(cfg):
+    """The rectangle of the title cartouche in supersampled pixels, or None.
+
+    Measured here rather than inside render() because build_site.py needs it too: the
+    cartouche is filled opaquely and sits inside the map frame, so the vector layer of
+    the site has to be clipped out of it — otherwise a route would run across a title
+    it has always run underneath.
+    """
+    titles = list(cfg['title']); subs = list(cfg['subtitle'])
+    if not (titles or subs):
+        return None
+    d = ImageDraw.Draw(Image.new('L', (1, 1)))
+    f_t = F("Poppins-Bold", 60); f_s = F("Lora-Italic-Variable", 27)
+    arrow = cfg['arrow'] and len(titles) >= 2
+
+    h = 42 * S
+    for i, _ in enumerate(titles):
+        h += f_t.size
+        if i < len(titles) - 1:
+            h += (58 * S if arrow else 20 * S)
+    if subs:
+        h += 52 * S + len(subs) * 40 * S
+    h += 27 * S
+
+    wid = max([d.textlength(t, font=f_t) for t in titles] +
+              [d.textlength(s, font=f_s) for s in subs] + [0]) + 68 * S
+    cx0, cy1 = 64 * S, 1042 * S
+    return (cx0, cy1 - h, cx0 + max(414 * S, wid), cy1)
+
+
 # ----------------------------------------------------------------- rendering
-def render(cfg, out_path):
+def render(cfg, out_path, overlay=True):
+    """Draw one collection. Without `overlay` the routes, highlights and endpoints stay off.
+
+    That second variant is the background of the interactive map on the site, which draws
+    those three layers as vectors instead. Everything random happens before them and every
+    generator is seeded here, so the background comes out identical to the one underneath
+    the full cover image.
+    """
     ROUTES = [cfg['_routes'][k] for k in cfg['_order']]
 
     img = Image.new('RGB', (W, H), PAPER)
@@ -270,55 +348,56 @@ def render(cfg, out_path):
         d.line(pts, fill=(150, 190, 206), width=int(wd * S * 1.9), joint='curve')
         d.line(pts, fill=(112, 164, 188), width=int(wd * S), joint='curve')
 
-    # routes: dashed hiking-map line
-    def dashed(pts, col, dash=14, gap=10, w=4):
-        acc = 0; on = True; cur = [pts[0]]
-        for i in range(1, len(pts)):
-            x0, y0 = pts[i - 1]; x1, y1 = pts[i]
-            seglen = math.hypot(x1 - x0, y1 - y0); t = 0
-            while t < seglen:
-                step = min((dash if on else gap) * S - acc, seglen - t)
-                nx = x0 + (x1 - x0) * (t + step) / seglen; ny = y0 + (y1 - y0) * (t + step) / seglen
-                if on:
-                    cur.append((nx, ny))
-                t += step; acc += step
-                if acc >= (dash if on else gap) * S - 0.01:
-                    if on and len(cur) > 1:
-                        d.line(cur, fill=col, width=int(w * S), joint='curve')
-                    on = not on; acc = 0; cur = [(nx, ny)]
-        if on and len(cur) > 1:
-            d.line(cur, fill=col, width=int(w * S), joint='curve')
+    if overlay:
+        # routes: dashed hiking-map line
+        def dashed(pts, col, dash=14, gap=10, w=4):
+            acc = 0; on = True; cur = [pts[0]]
+            for i in range(1, len(pts)):
+                x0, y0 = pts[i - 1]; x1, y1 = pts[i]
+                seglen = math.hypot(x1 - x0, y1 - y0); t = 0
+                while t < seglen:
+                    step = min((dash if on else gap) * S - acc, seglen - t)
+                    nx = x0 + (x1 - x0) * (t + step) / seglen; ny = y0 + (y1 - y0) * (t + step) / seglen
+                    if on:
+                        cur.append((nx, ny))
+                    t += step; acc += step
+                    if acc >= (dash if on else gap) * S - 0.01:
+                        if on and len(cur) > 1:
+                            d.line(cur, fill=col, width=int(w * S), joint='curve')
+                        on = not on; acc = 0; cur = [(nx, ny)]
+            if on and len(cur) > 1:
+                d.line(cur, fill=col, width=int(w * S), joint='curve')
 
-    for r in ROUTES:
-        dashed(PA(r), (255, 255, 255), w=7, dash=14, gap=10)
-    for r in ROUTES:
-        dashed(PA(r), ACCENT, w=4, dash=14, gap=10)
+        for r in ROUTES:
+            dashed(PA(r), (255, 255, 255), w=7, dash=14, gap=10)
+        for r in ROUTES:
+            dashed(PA(r), ACCENT, w=4, dash=14, gap=10)
 
-    # highlights
-    f_lab = F("Lora-Italic-Variable", 26); f_place = F("Poppins-Medium", 30)
+        # highlights
+        f_lab = F("Lora-Italic-Variable", 26); f_place = F("Poppins-Medium", 30)
 
-    def label(x, y, txt, font, side):
-        tw = d.textlength(txt, font=font); th = font.size
-        tx = x - tw / 2 if side == 'c' else (x if side == 'r' else x - tw)
-        d.rectangle([tx - 9 * S, y - 5 * S, tx + tw + 9 * S, y + th + 7 * S], fill=(246, 237, 216))
-        d.text((tx, y), txt, font=font, fill=INK)
+        def label(x, y, txt, font, side):
+            tw = d.textlength(txt, font=font); th = font.size
+            tx = x - tw / 2 if side == 'c' else (x if side == 'r' else x - tw)
+            d.rectangle([tx - 9 * S, y - 5 * S, tx + tw + 9 * S, y + th + 7 * S], fill=(246, 237, 216))
+            d.text((tx, y), txt, font=font, fill=INK)
 
-    for hl in cfg['highlights']:
-        la, lo = (hl['lat'], hl['lon']) if 'lat' in hl else at(route_of(cfg, hl['route']), hl['km'])
-        ox, oy = hl.get('offset', (14, 44))
-        x, y = P(la, lo)
-        icon_of(hl['icon'])(d, x, y, hl.get('size', 34) * S)
-        label(x + ox * S, y + oy * S, hl['label'], f_lab, hl.get('side', 'r'))
+        for hl in cfg['highlights']:
+            la, lo = (hl['lat'], hl['lon']) if 'lat' in hl else at(route_of(cfg, hl['route']), hl['km'])
+            ox, oy = hl.get('offset', (14, 44))
+            x, y = P(la, lo)
+            icon_of(hl['icon'])(d, x, y, hl.get('size', 34) * S)
+            label(x + ox * S, y + oy * S, hl['label'], f_lab, hl.get('side', 'r'))
 
-    # endpoints
-    for ep in cfg['endpoints']:
-        x, y = P(ep['lat'], ep['lon'])
-        icon_of(ep['icon'])(d, x, y, ep.get('size', 44) * S)
-        name = ep['label']
-        tw = d.textlength(name, font=f_place)
-        yy = y + 62 * S
-        d.rectangle([x - tw / 2 - 14 * S, yy, x + tw / 2 + 14 * S, yy + f_place.size + 12 * S], fill=INK)
-        d.text((x - tw / 2, yy + 5 * S), name, font=f_place, fill=PAPER)
+        # endpoints
+        for ep in cfg['endpoints']:
+            x, y = P(ep['lat'], ep['lon'])
+            icon_of(ep['icon'])(d, x, y, ep.get('size', 44) * S)
+            name = ep['label']
+            tw = d.textlength(name, font=f_place)
+            yy = y + 62 * S
+            d.rectangle([x - tw / 2 - 14 * S, yy, x + tw / 2 + 14 * S, yy + f_place.size + 12 * S], fill=INK)
+            d.text((x - tw / 2, yy + 5 * S), name, font=f_place, fill=PAPER)
 
     # compass
     ccx, ccy, cr = 1478 * S, 1086 * S, 54 * S
@@ -330,23 +409,11 @@ def render(cfg, out_path):
 
     # title cartouche, bottom left (grows upwards with the number of lines)
     titles = list(cfg['title']); subs = list(cfg['subtitle'])
-    if titles or subs:
+    box = cartouche_box(cfg)
+    if box:
         f_t = F("Poppins-Bold", 60); f_s = F("Lora-Italic-Variable", 27)
         arrow = cfg['arrow'] and len(titles) >= 2
-
-        h = 42 * S
-        for i, _ in enumerate(titles):
-            h += f_t.size
-            if i < len(titles) - 1:
-                h += (58 * S if arrow else 20 * S)
-        if subs:
-            h += 52 * S + len(subs) * 40 * S
-        h += 27 * S
-
-        wid = max([d.textlength(t, font=f_t) for t in titles] +
-                  [d.textlength(s, font=f_s) for s in subs] + [0]) + 68 * S
-        cx0, cy1 = 64 * S, 1042 * S
-        cx1 = cx0 + max(414 * S, wid); cy0 = cy1 - h
+        cx0, cy0, cx1, cy1 = box
         d.rectangle([cx0, cy0, cx1, cy1], fill=(246, 238, 218), outline=ACCENT, width=3 * S)
         d.rectangle([cx0 + 9 * S, cy0 + 9 * S, cx1 - 9 * S, cy1 - 9 * S], outline=(206, 186, 152), width=1 * S)
 
@@ -398,6 +465,7 @@ def main(argv=None):
     for folder in folders:
         cfg = read_config(folder)
         out = render(cfg, os.path.join(a.out, cfg['output']))
+        render(cfg, os.path.join(a.out, bg_name(cfg['output'])), overlay=False)
         print("%-24s %d routes -> %s" % (cfg['name'], len(cfg['_order']), out))
 
 

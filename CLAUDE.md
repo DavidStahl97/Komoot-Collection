@@ -26,20 +26,32 @@ English. A German label in a JSON file is correct; a German variable name is not
 ## Verification
 
 There are no tests, no linter and no build system. The script *is* the test:
-`python3 map_cover.py` either runs through and writes one PNG per collection into `out/`,
-or it aborts. A change counts as checked only once the resulting image has been looked at —
-especially anything touching positions, since there is no collision detection for labels.
-If you only work on one collection, append its folder name
-(`python3 map_cover.py brandy-haiger`); if you change the shared layout, check all of them,
-because every collection has a different map frame.
+`python3 map_cover.py` either runs through and writes two PNGs per collection into `out/`
+(the cover and its background), or it aborts. A change counts as checked only once the
+resulting image has been looked at — especially anything touching positions, since there is
+no collision detection for labels. If you only work on one collection, append its folder
+name (`python3 map_cover.py brandy-haiger`); if you change the shared layout, check all of
+them, because every collection has a different map frame.
 
-The same goes for the site: `python3 build_site.py` runs after `map_cover.py` and writes
-`site/`. A change is checked only once `site/index.html` has been looked at in a browser —
-home, a collection subpage and the icon list. On the subpage that also means picking a
-tour: the overlay lies on top of the image without any alignment of its own, so a shifted
-frame or a moved label shows up as lines next to the drawn ones or as half-veiled text. The workflow `.github/workflows/maps.yml`
-does both in CI: in a pull request as the artifact `collection-icons`, on `main` as a
-GitHub Page.
+Two things have a cheap, exact check and should use it instead of an opinion:
+
+- **The cover must not move.** `sha256` of `out/<collection>.png` before and after. Anything
+  that leaves it unchanged cannot have touched what komoot gets.
+- **The icons must agree.** `site/icons/index.html` shows every icon twice, stamped by PIL
+  and recorded by `svgdraw.py`. They come from the same function in `icons.py`; where the
+  two tiles differ, the recorder is wrong. `shark` is the only `arc`, `windmount` has the
+  thinnest strokes, `bike` the only stroked circle — those three catch most of it.
+
+For the rest of the site: `python3 build_site.py` runs after `map_cover.py` and writes
+`site/`. A change is checked only once it has been looked at in a browser — home, a
+collection subpage and the icon list. On the subpage that means picking a tour and looking
+at the two places where tours meet: „Der Knoten" sits on the Ulmtalradweg and
+„Ulmtalradweg" lies across Über Greifenstein. Pick FU and the Ulmtalradweg has to run
+unbroken through „Der Knoten" while „Der Knoten" steps back; pick KN and the same the other
+way round. The vector lines have no alignment of their own — they come from `projection()`
+— so a shifted frame shows up as lines running beside the tree-free corridors the
+background was stamped around them. The workflow `.github/workflows/maps.yml` does all of
+it in CI: in a pull request as the artifact `collection-icons`, on `main` as a GitHub Page.
 
 Anything touching the progressive web app cannot be checked over `file://` — service
 worker and manifest need an origin. `python3 -m http.server -d site 8000` and
@@ -58,15 +70,22 @@ labels in plates that have shrunk with them, then no font was found at all and
 ## Architecture
 
 `map_cover.py` has two halves. On top sit the configuration and the GPX helpers (`load`,
-`cum`, `seg`, `at`, `discover`, `read_config`); below, `render(cfg, out_path)` draws one
-collection onto a PIL canvas. Inside `render`, the order in the file is the drawing order
-(paper grain → woodland → rivers → routes → highlights → endpoints → compass → cartouche).
-Moving something changes what covers what.
+`elevation`, `cum`, `seg`, `at`, `discover`, `read_config`); below,
+`render(cfg, out_path, overlay=True)` draws one collection onto a PIL canvas. Inside
+`render`, the order in the file is the drawing order (paper grain → woodland → rivers →
+routes → highlights → endpoints → compass → cartouche). Moving something changes what
+covers what.
+
+`overlay=False` leaves routes, highlights and endpoints off and yields the background of
+the interactive map. That it comes out identical to the background under the full cover is
+not luck: every generator is seeded inside `render` and all four seeds (7, 11, 41, 23) are
+spent before the routes are drawn. Put anything random *between* the rivers and the
+cartouche and the two images drift apart without a word.
 
 `main()` uses `discover()` to find every subfolder of `gpx/` containing GPX files and calls
-`read_config` and `render` for each. Every collection is entirely self-contained: its own
-frame, its own highlights, its own output file. Only the constants at the top of the file
-(`S`, `W`/`H`, colors, `BOX`) and the icons in `icons.py` are shared.
+`read_config` and `render` for each, twice. Every collection is entirely self-contained: its
+own frame, its own highlights, its own output files. Only the constants at the top of the
+file (`S`, `W`/`H`, colors, `BOX`) and the icons in `icons.py` are shared.
 
 Load-bearing concepts:
 
@@ -108,42 +127,55 @@ function in `icons.py` whose first four parameters are named `d, x, y, s` is an 
 is what drops `poly` and `circ`. Icons are stamped large and then cropped to what was
 actually drawn, because they reach past their radius by different amounts.
 
-The interactive layer of a collection page is generated the same way: `geometry(cfg)`
-projects routes, highlights and endpoints into the coordinates of the finished image and
-`MAP_JS` builds an SVG over the PNG from that JSON. Dimming is one veil rectangle with a
-mask — the picked route, its highlights and the endpoints are holes in it, so what stays
-visible is the drawn map, never a redrawn copy. The order inside the mask carries meaning:
-first the corridor of each route is cut open, then the highlights of the *other* tours are
-painted back white (`marks` with a padding), and only then the endpoints. Without that
-second pass a highlight of another tour would ride along in the focus wherever its label
-reaches into the corridor. What is meant is the one tour, not its surroundings, and the
-two numbers that decide that are the corridor width (40, wide enough for the drawn line,
-not for its neighbourhood) and the padding of the holes.
+The map of a collection page is generated the same way. `geometry(cfg, bg)` projects
+routes, highlights and endpoints into the coordinates of the finished image and emits them
+as a JSON island; `MAP_JS` — written to `site/map.js` — builds an SVG from it over the
+background image. The background carries only what is painted; everything semantic is a
+vector element on top of it.
 
-The padding of the covers is *negative*: they hug icon and plate instead of taking the air
-around them, and they use their own, crisper blur (`map-edge`). Both follow from the same
-constraint — „Der Knoten" sits on the Ulmtalradweg and „Ulmtalradweg" lies across Über
-Greifenstein. A generous cover would cut the picked tour in two there, and the picked tour
-has to stay unbroken over its whole length. What is lost is nothing: under icon and plate
-the route is invisible anyway, because `render` draws them over it. Anything drawn beyond
-the mark — the masts of the wind turbines, for instance — stays faintly visible where the
-picked route passes; that is the price of the unbroken line. Four things follow.
+That is the whole reason the highlighting works. Picking a tour sets two class names, the
+rest is CSS: a `wash` rectangle over the painted map, `.route`/`.mark` at low opacity,
+`.on` at full. There is nothing to cut free, so two tours crossing is not a case — they are
+separate elements and always were. A highlight of another tour recedes with its tour even
+when it sits on the picked line, and the picked line runs through unbroken. Do not
+reintroduce a marker around the picked highlights: being the only ones left in front is
+what marks them.
 
-The label holes come from `label_box`, which mirrors the label drawing in `render`
-(offset, `side`, plate padding) and measures the text with the same fonts via `measure()`
-— if the labels move in `render`, they have to move here as well, otherwise the veil clips
-them. The holes are blurred (`stdDeviation` in `MAP_JS`), so every box keeps a margin
-wider than that blur, but only a little wider: with too much, „Lahn bei Löhnberg" pulls
-the border of the cartouche out of the veil. The covers over foreign highlights need more,
-because they have to reach past the soft edge of the hole underneath them.
+Four things carry weight in there:
 
-The line drawn on top is masked with `map-over`, which punches out every highlight and
-every endpoint — on the drawn map the highlights lie above the routes, and the overlay has
-to keep to that order instead of running through icon and label. And the highlights of the
-picked tour get no ring or marker of their own: what marks them is that they are the only
-ones left uncovered, which is why the veil is deep (`.veil.on`) — the emphasis comes from
-the contrast, not from anything drawn on top. The image itself stays untouched and
-downloadable — it is what komoot shows as the cover.
+- **The vector layer is clipped out of the cartouche** (`guard` in the JSON,
+  `cartouche_box()` in `map_cover.py`). The cartouche is filled opaquely and sits inside
+  the map frame; the renderer draws the routes underneath it, and without the clip the
+  browser would draw them over it. Today there are 23 px between it and the nearest route —
+  that is not a margin, it is one bad `offset` away.
+- **Which tour a click means is decided by distance**, computed in JS over the real lines,
+  not by a stack of click paths. Where two tours run side by side both are reachable and
+  the nearer wins; a near tie goes to the tour already picked, so a shared stretch does not
+  flicker. This is what the old stacked `stroke-width` paths could not do.
+- **Labels are measured in the browser** from `getBBox()`, twice — once immediately and
+  once in `document.fonts.ready`, because before the web font arrives the fallback gives a
+  narrower box. There is no `label_box` mirroring the renderer any more and there must not
+  be one again: the background carries no labels, so nothing has to agree with anything.
+- **`rdp` returns indices, not points**, and its tolerance is 0.25 px rather than 1. The
+  indices are what lets each point carry its position along the tour (per mille), which is
+  what ties the map to the elevation profile in both directions. The tolerance is a quarter
+  pixel because the map zooms to four times, where a whole pixel of error walks visibly out
+  of the tree-free corridor.
+
+Under zoom, routes scale with the map and icons, plates and text scale against it
+(`place()`), so they hold their size on screen. The cover image itself stays untouched and
+downloadable — it is what komoot shows as the cover, and without JavaScript it is the whole
+page.
+
+`svgdraw.py` is what keeps the icons single-sourced. `SvgRecorder` behaves like an
+`ImageDraw.Draw` and writes SVG instead of pixels, so `icons.py` stays the only place an
+icon is described. Two things in there were measured against PIL rather than assumed, and
+both would be silent if wrong: PIL lays the outline of an `ellipse` and the band of an
+`arc` *inside* the bounding box, so stroked radii shrink by half the width; and the angles
+of `arc` are parametric, not geometric. Icons are recorded at `size * S` — the radius the
+renderer passes — because the stroke widths inside `icons.py` are clamped with
+`max(2, int(s·k))`, and at any other scale those clamps resolve differently. The `<use>`
+carries the matching `scale(1/S)`.
 
 The progressive web app also comes out of `build_site.py` and follows from the same rule:
 nothing is maintained by hand. `manifest()` derives its colors from `PAPER`, `app_icon()`
@@ -155,6 +187,16 @@ content of all files: same content, same name, kept cache; one changed byte, new
 old one deleted on activation. All paths in manifest, `<link>` and registration are
 relative (`base` from `page()`), because the page is not served from the domain root but
 from `/<repository>/`; an absolute `/sw.js` would go nowhere on GitHub Pages.
+
+Two consequences of that for anything new under `site/`. `map.js` is written before
+`service_worker()` and asked for as `map.js?v=<hash>`, because pages come from the network
+first while assets come from the cache — without the version a fresh page could meet a
+stale module for one visit. The service worker therefore looks assets up with
+`ignoreSearch`, or the precached `map.js` would never answer the versioned request offline.
+And `ship_fonts()` copies a font only when its licence file sits next to it, so the Google
+fonts travel with the site and whatever a Windows or Linux machine happens to provide does
+not. That is also why the site never disagrees with the PNG: both halves resolve the same
+face through `font_file()`.
 
 `icons.py` contains nothing but the icons. Each follows the signature `fn(d, x, y, s)` with
 `s` as the radius scale — the caller already passes `*S`, so do not scale again inside the
