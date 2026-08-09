@@ -1,5 +1,8 @@
 # Maps for komoot collections
 
+**➡️ [Open the site](https://davidstahl97.github.io/Komoot-Collection/)** — all
+collections with their maps, the interactive tour picker and the icon list.
+
 Generator for the cover images of my komoot collections. The first one is
 [„Brandy <-> Haiger"](https://www.komoot.com/collection/4605392/-brandy-haiger) —
 gravel routes between Haiger and Brandoberndorf in the Lahn-Dill-Bergland; more
