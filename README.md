@@ -37,7 +37,7 @@ Every run produces exactly the same image — all random numbers have fixed seed
 |---|---|
 | `map_cover.py` | Finds the collections and builds each map, in layers from top to bottom. |
 | `icons.py` | The drawn icons: fox, lake, wind-turbine hill, cycle path, river, idyllic path, dill, mine, shark, house in the woods. |
-| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons. |
+| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons — including manifest, service worker and app icon of the progressive web app. |
 | `gpx/<collection>/` | One folder per collection: the GPX exports and optionally a `collection.json`. Nothing runs without them. |
 | `out/` | The rendered PNGs. Not checked in. |
 | `site/` | The generated site. Not checked in. |
@@ -167,6 +167,39 @@ python3 build_site.py --png out --out site
 
 New icons and new collections show up on their own: `build_site.py` collects the
 collections via `discover()` and the icons via the signature `fn(d, x, y, s)`.
+
+### The site as a progressive web app
+
+The page is installable and works offline. `build_site.py` writes, next to the
+pages, everything needed for that:
+
+| File | Purpose |
+|---|---|
+| `manifest.webmanifest` | Name, colors, icons. All paths relative, because the page lives under `/<repository>/`. |
+| `sw.js` | Service worker: precaches every generated file, serves it when offline. |
+| `pwa/icon-*.png` | App icon — a compass rose on paper, drawn with the same PIL primitives as the maps. |
+
+Installing works from the browser menu ("Install app" / "Add to Home Screen") once
+the page is served over HTTPS — GitHub Pages does that. On the first visit the
+service worker caches all pages, cover images and icons; after that every subpage
+opens without a network.
+
+Pages are fetched from the network first and only come from the cache when that
+fails, so a new deployment is visible on the next visit. Images and the manifest
+come from the cache, because the cache name carries a hash over all files: a build
+with unchanged content keeps the cache, any change replaces it as a whole and the
+old one is deleted on activation.
+
+Testing this locally needs a server — `file://` has no service worker:
+
+```bash
+python3 map_cover.py --out out && python3 build_site.py --png out --out site
+python3 -m http.server -d site 8000    # then http://127.0.0.1:8000/
+```
+
+`localhost` counts as a secure origin, so registration works there too. In the
+developer tools under *Application* the service worker, the manifest and the
+cache content are visible; *Network → Offline* plus a reload is the test.
 
 The GitHub runners do not have Lora and Poppins; the workflow fetches them before
 rendering. If that fails, the fallback to DejaVu/Liberation kicks in — the map is

@@ -11,23 +11,34 @@ Result:
     site/index.html                 Home — every collection with its cover image
     site/collections/index.html     overview, one subpage per collection
     site/icons/index.html           every icon as a list
+    site/manifest.webmanifest       the site as an installable progressive web app
+    site/sw.js                      service worker, precaches everything for offline use
 """
-import argparse, html, inspect, os, shutil, sys
+import argparse, hashlib, html, inspect, json, math, os, shutil, sys
 
 from PIL import Image, ImageChops, ImageDraw
 
 import icons as IC
-from map_cover import GPX_ROOT, OUT_DIR, PAPER, discover, read_config, slugify
+from map_cover import ACCENT, GPX_ROOT, INK, MUTED, OUT_DIR, PAPER, discover, read_config, slugify
 
 SITE_DIR = 'site'
 IC_S = 2                        # supersampling of the icon sheets
 IC_PX = 150                     # edge length of an icon sheet in pixels
 
+PWA_DIR = 'pwa'                 # app icons, below the site root
+APP_NAME = "Maps for komoot collections"
+APP_SHORT = "komoot maps"
+APP_DESC = ("Illustrated cover images for komoot collections — drawn from the GPX exports "
+            "of the tours.")
+
 CSS = """
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 0 24px 72px; background: #f3e8d0; color: #3b342a;
-         font-family: Georgia, "Times New Roman", serif; }
+  body { margin: 0; background: #f3e8d0; color: #3b342a;
+         font-family: Georgia, "Times New Roman", serif;
+         /* viewport-fit=cover: installed on a phone the page runs under the notch */
+         padding: env(safe-area-inset-top) calc(24px + env(safe-area-inset-right))
+                  calc(72px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left)); }
   a { color: #b0603a; }
   .wrap { max-width: 1100px; margin: 0 auto; }
   nav { border-bottom: 2px solid #b0603a; padding: 20px 0 14px; margin-bottom: 40px; }
@@ -64,9 +75,24 @@ CSS = """
 PAGE = """<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{title}</title>
+<meta name="description" content="{desc}">
+<meta name="theme-color" content="{paper}">
+<link rel="manifest" href="{base}manifest.webmanifest">
+<link rel="icon" href="{base}pwa/icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="{base}pwa/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="{short}">
+<meta name="mobile-web-app-capable" content="yes">
 <style>{css}</style>
+<script>
+  // Progressive web app: the service worker precaches pages, maps and icons, so an
+  // installed copy also opens without a network. Registration is optional — without it
+  // the page is an ordinary static site.
+  if ("serviceWorker" in navigator)
+    addEventListener("load", function () {{ navigator.serviceWorker.register("{base}sw.js"); }});
+</script>
 <nav><div class="wrap"><ul>
 {nav}
 </ul></div></nav>
@@ -115,6 +141,130 @@ def stamp(fn, path):
     sheet.resize((IC_PX, IC_PX), Image.LANCZOS).save(path)
 
 
+# ------------------------------------------------------------- app identity
+def rose(d, x, y, r):
+    """Compass rose — the motif of the app icon, taken from the compass on the map."""
+    IC.circ(d, x, y, r * 1.16, outline=MUTED, w=max(1, int(r * 0.045)))
+    IC.circ(d, x, y, r * 1.30, outline=INK, w=max(1, int(r * 0.07)))
+    for i in range(4):                                   # short points, diagonal
+        a = math.radians(45 + 90 * i)
+        d.polygon([(x + r * 0.62 * math.cos(a), y + r * 0.62 * math.sin(a)),
+                   (x + r * 0.20 * math.cos(a + math.pi / 2),
+                    y + r * 0.20 * math.sin(a + math.pi / 2)),
+                   (x + r * 0.20 * math.cos(a - math.pi / 2),
+                    y + r * 0.20 * math.sin(a - math.pi / 2))], fill=ACCENT)
+    for i in range(4):                                   # long points, cardinal
+        a = math.radians(90 * i - 90)
+        tip = (x + r * math.cos(a), y + r * math.sin(a))
+        for side in (1, -1):                             # one half dark, one half light
+            base = (x + r * 0.17 * math.cos(a + side * math.pi / 2),
+                    y + r * 0.17 * math.sin(a + side * math.pi / 2))
+            d.polygon([tip, base, (x, y)],
+                      fill=INK if side > 0 else PAPER, outline=INK)
+
+
+def app_icon(path, px, maskable=False):
+    """The icon of the installed app: compass rose on paper.
+
+    A maskable icon may be cropped to a circle by the launcher, so the rose stays inside
+    the safe zone (80 % of the edge) and the frame of the other icons is left out.
+    """
+    s, k = 4, 0.28 if maskable else 0.30             # supersampling, radius share
+    big = px * s
+    img = Image.new('RGB', (big, big), PAPER)
+    d = ImageDraw.Draw(img)
+    if not maskable:
+        m, w = big * 0.06, max(1, int(big * 0.035))
+        d.rectangle([m, m, big - m - 1, big - m - 1], outline=ACCENT, width=w)
+    rose(d, big / 2, big / 2, big * k)
+    img.resize((px, px), Image.LANCZOS).save(path)
+
+
+def manifest(site_dir):
+    """The web app manifest — all paths relative, the page lives in a repository subfolder."""
+    icon = lambda f, size, purpose: {"src": "%s/%s" % (PWA_DIR, f), "sizes": "%dx%d" % (size, size),
+                                     "type": "image/png", "purpose": purpose}
+    data = {
+        "name": APP_NAME,
+        "short_name": APP_SHORT,
+        "description": APP_DESC,
+        "lang": "en",
+        "start_url": "./",
+        "scope": "./",
+        "id": "./",
+        "display": "standalone",
+        "orientation": "any",
+        "background_color": "#%02x%02x%02x" % PAPER,
+        "theme_color": "#%02x%02x%02x" % PAPER,
+        "icons": [icon("icon-192.png", 192, "any"), icon("icon-512.png", 512, "any"),
+                  icon("icon-maskable-512.png", 512, "maskable")],
+    }
+    path = os.path.join(site_dir, 'manifest.webmanifest')
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+
+
+SW = """// Service worker of the progressive web app — generated by build_site.py.
+// The cache name carries a hash over all files: a build with unchanged content keeps
+// the cache, any change replaces it as a whole.
+const CACHE = "komoot-maps-%(version)s";
+const ASSETS = %(assets)s;
+
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", (e) => {
+  e.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+
+self.addEventListener("fetch", (e) => {
+  const url = new URL(e.request.url);
+  if (e.request.method !== "GET" || url.origin !== location.origin) return;
+
+  // Pages from the network first, so a new deployment is visible right away; the cache
+  // steps in when offline. Images and the manifest come from the cache — the cache name
+  // changes with every content change anyway.
+  if (e.request.mode === "navigate") {
+    e.respondWith(fetch(e.request)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(e.request)
+        .then((hit) => hit || caches.match(self.registration.scope))));
+    return;
+  }
+
+  e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
+});
+"""
+
+
+def service_worker(site_dir):
+    """Write sw.js with a precache list of everything below site/ and a content hash."""
+    files, h = [], hashlib.sha256()
+    for root, _, names in os.walk(site_dir):
+        for name in sorted(names):
+            if name == 'sw.js':
+                continue
+            p = os.path.join(root, name)
+            rel = os.path.relpath(p, site_dir).replace(os.sep, '/')
+            files.append(rel)
+            with open(p, 'rb') as fh:
+                h.update(rel.encode()); h.update(fh.read())
+    files.sort()
+    # "./" is the start URL of the manifest and has to be cached under that name as well.
+    assets = ['./'] + files
+    with open(os.path.join(site_dir, 'sw.js'), 'w', encoding='utf-8') as fh:
+        fh.write(SW % {'version': h.hexdigest()[:12],
+                       'assets': json.dumps(assets, indent=2)})
+    return len(assets)
+
+
 # ---------------------------------------------------------------- page build
 def nav_html(items, active, base):
     """Navigation with the collections as sub-items."""
@@ -132,6 +282,9 @@ def nav_html(items, active, base):
 def page(path, title, body, nav, repo, built, base):
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write(PAGE.format(title=html.escape(title), css=CSS, nav=nav, body=body,
+                             base=base, desc=html.escape(APP_DESC),
+                             short=html.escape(APP_SHORT),
+                             paper="#%02x%02x%02x" % PAPER,
                              repo=html.escape(repo),
                              built=(" — built: %s" % html.escape(built)) if built else ""))
     return path
@@ -165,8 +318,15 @@ def build(gpx_root, out_dir, site_dir, repo, built):
     if not items:
         sys.exit("no maps found in %s/ — run map_cover.py first." % out_dir)
 
-    for sub in ('covers', 'collections', 'icons'):
+    for sub in ('covers', 'collections', 'icons', PWA_DIR):
         os.makedirs(os.path.join(site_dir, sub), exist_ok=True)
+
+    # app icons and manifest — the site is installable as a progressive web app
+    for name, px, mask in (('icon-192.png', 192, False), ('icon-512.png', 512, False),
+                           ('icon-maskable-512.png', 512, True),
+                           ('apple-touch-icon.png', 180, False)):
+        app_icon(os.path.join(site_dir, PWA_DIR, name), px, mask)
+    manifest(site_dir)
 
     # write out cover images and icons
     covers = {}
@@ -252,7 +412,10 @@ def build(gpx_root, out_dir, site_dir, repo, built):
     page(os.path.join(site_dir, 'icons', 'index.html'), "Icons", body,
          nav_html(nav_items, 'icons', '../'), repo, built, '../')
 
-    print("%d collections, %d icons -> %s/index.html" % (len(items), len(names), site_dir))
+    # last, because the service worker precaches everything that exists at this point
+    cached = service_worker(site_dir)
+    print("%d collections, %d icons, %d files precached -> %s/index.html"
+          % (len(items), len(names), cached, site_dir))
 
 
 def main(argv=None):

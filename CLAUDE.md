@@ -39,6 +39,12 @@ home, a collection subpage and the icon list. The workflow `.github/workflows/ma
 does both in CI: in a pull request as the artifact `collection-icons`, on `main` as a
 GitHub Page.
 
+Anything touching the progressive web app cannot be checked over `file://` — service
+worker and manifest need an origin. `python3 -m http.server -d site 8000` and
+`http://127.0.0.1:8000/` are enough; `localhost` counts as secure. Checked means: the
+service worker is *activated* under *Application*, and the three page types still open
+with *Network → Offline* switched on.
+
 The target directory and the fonts are no longer hard-wired: `out/` is created when
 missing, and `F(...)` falls back to DejaVu or Liberation when the Google fonts are absent.
 A run on someone else's machine therefore says nothing about the final typography — font
@@ -92,6 +98,17 @@ list of the icon page does not come from an enumeration but from the signature �
 function in `icons.py` whose first four parameters are named `d, x, y, s` is an icon, which
 is what drops `poly` and `circ`. Icons are stamped large and then cropped to what was
 actually drawn, because they reach past their radius by different amounts.
+
+The progressive web app also comes out of `build_site.py` and follows from the same rule:
+nothing is maintained by hand. `manifest()` derives its colors from `PAPER`, `app_icon()`
+draws the compass rose with the PIL primitives of the maps, and `service_worker()` walks
+the finished `site/` and writes exactly what is there into the precache list — which is
+why it has to run *last* in `build`, after every page and image exists. A new page that is
+written after it would be missing offline. The cache name is a sha256 over path and
+content of all files: same content, same name, kept cache; one changed byte, new cache,
+old one deleted on activation. All paths in manifest, `<link>` and registration are
+relative (`base` from `page()`), because the page is not served from the domain root but
+from `/<repository>/`; an absolute `/sw.js` would go nowhere on GitHub Pages.
 
 `icons.py` contains nothing but the icons. Each follows the signature `fn(d, x, y, s)` with
 `s` as the radius scale — the caller already passes `*S`, so do not scale again inside the

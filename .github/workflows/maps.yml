@@ -58,6 +58,7 @@ jobs:
           path: |
             out/*.png
             site/icons/*.png
+            site/pwa/*.png
           if-no-files-found: error
           retention-days: 30
 
