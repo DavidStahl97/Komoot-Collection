@@ -33,17 +33,22 @@ Run it from the repository root — the paths are relative and can be moved with
 Liberation, on Windows to Georgia and Calibri: the layout stays, the typeface looks
 different.
 
+Each collection produces two files: `<collection>.png`, the cover komoot gets, and
+`<collection>-bg.png`, the same sheet without routes, highlights and endpoints. The
+site draws those as vectors on top of it, so the background is what stays painted.
+
 Every run produces exactly the same image — all random numbers have fixed seeds.
 
 ## What lives where
 
 | File | Purpose |
 |---|---|
-| `map_cover.py` | Finds the collections and builds each map, in layers from top to bottom. |
+| `map_cover.py` | Finds the collections and builds each map, in layers from top to bottom — twice: the cover image and, without routes and highlights, the background of the interactive map. |
 | `icons.py` | The drawn icons: fox, lake, wind-turbine hill, cycle path, river, idyllic path, dill, mine, shark, house in the woods. |
-| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons — including the interactive layer over the map, manifest, service worker and app icon of the progressive web app. |
+| `svgdraw.py` | Records what `icons.py` draws as SVG instead of pixels, so the site gets the same icons as vectors without a second set of them. |
+| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons — including the vector map (`site/map.js`), manifest, service worker and app icon of the progressive web app. |
 | `gpx/<collection>/` | One folder per collection: the GPX exports and optionally a `collection.json`. Nothing runs without them. |
-| `out/` | The rendered PNGs. Not checked in. |
+| `out/` | The rendered PNGs: `<collection>.png` is the cover, `<collection>-bg.png` its background. Not checked in. |
 | `site/` | The generated site. Not checked in. |
 | `.github/workflows/maps.yml` | Renders on every push and pull request, attaches the images to the PR and publishes the site. |
 
@@ -178,31 +183,48 @@ python3 build_site.py --png out --out site
 New icons and new collections show up on their own: `build_site.py` collects the
 collections via `discover()` and the icons via the signature `fn(d, x, y, s)`.
 
-### The map as an interactive layer
+### The map as a vector map
 
-On the subpage of a collection the cover image is not just a picture. Picking a
-tour — by clicking its line on the map or its entry under *Tours* — leaves that one
-tour alone in focus: everything else is covered with a sheet of paper, while the
-picked route, its highlights and both endpoints stay clear. What stays clear is the tour,
-not its surroundings: the strip along the line is narrow, and highlights of the other
-tours go under the paper with icon and label even where they sit right next to the picked
-route — and the picked route runs through unbroken, past every foreign highlight lying on
-it. Nothing extra is drawn around the highlights that remain — being the only ones left
-visible, in front of a sheet that covers everything else, is what marks them, and the line
-drawn along the route stops short of them instead of running through icon and label.
-Clicking again, a click
-next to it or `Esc` brings the whole collection back; hovering only shows a preview.
-The rows under *Highlights and endpoints* fade along with it, and the picked tour
-ends up in the address as `#tour-KN`, so a single tour can be linked to.
+On the subpage of a collection the map is not a picture at all. Only what is *painted*
+comes as an image — paper grain, woodland, tree stamps, rivers, compass, cartouche. That
+is `out/<collection>-bg.png`, the same sheet as the cover but with the routes, highlights
+and endpoints left off. Everything that means something is drawn in the browser as SVG:
+one path per tour, one group per highlight, one per endpoint.
 
-What is dimmed is the drawn map itself, not a copy of it: an SVG lies over the PNG,
-its holes cut along the route. The positions come from the same projection as the
-renderer (`projection()` in `map_cover.py`, with the map frame scaled down by the
-supersampling), which is why the lines land exactly on the drawn ones.
+Which makes picking a tour two class names. Click a line on the map or an entry under
+*Tours* and that tour stays in front while everything else steps back — a sheet of paper
+over the painted map, and the other lines and highlights fading into it. Nothing is drawn
+around the highlights that remain: being the only ones left in front is what marks them.
+Clicking again, a click next to it or `Esc` brings the whole collection back; hovering only
+shows a preview. The rows under *Highlights and endpoints* fade along with it, and the
+picked tour ends up in the address as `#tour-KN`, so a single tour can be linked to.
 
-The image below stays untouched — *Download cover image (PNG)* gives out exactly
-the file from `out/`, with all tours on it, which is what komoot gets as the cover.
-Without JavaScript the page is what it was before: a map with a download link.
+Tours crossing each other is not a case that has to be handled — they are separate
+elements. A highlight of another tour goes back with its tour even when it sits directly on
+the picked line, and the picked line runs through unbroken. Which tour a click means is
+decided by distance, not by drawing order, so on a stretch where two run side by side both
+are reachable and the nearer one wins.
+
+The positions come from the same projection as the renderer (`projection()` in
+`map_cover.py`, with the map frame scaled down by the supersampling), which is why the
+lines land exactly in the tree-free corridors the background was stamped around them. The
+icons come from `icons.py` through `svgdraw.py`, which records the drawing calls as SVG
+instead of pixels — there is no second, hand-written set of icons that could drift. The
+label plates are measured in the browser from the text itself.
+
+**Zoom and pan.** Ctrl/⌘ and the wheel, pinch, double click or the buttons zoom in up to
+four times; drag to move, arrow keys with the map focused, `0` back to the whole sheet. The
+bare wheel keeps scrolling the page. Routes scale with the map, icons and labels keep their
+size on screen. The painted background is a 1600×1200 image and goes soft when magnified —
+as does the cartouche, which is part of it.
+
+**The elevation profile** below the map belongs to the picked tour, sampled from the `<ele>`
+values of the GPX. Running along it marks the spot on the map, running along the route
+marks the spot in the profile.
+
+The cover image stays untouched — *Download cover image (PNG)* gives out exactly the file
+from `out/`, with all tours on it, which is what komoot gets. Without JavaScript the page is
+what it always was: that image and a download link.
 
 ### The site as a progressive web app
 
@@ -213,7 +235,9 @@ pages, everything needed for that:
 |---|---|
 | `manifest.webmanifest` | Name, colors, icons. All paths relative, because the page lives under `/<repository>/`. |
 | `sw.js` | Service worker: precaches every generated file, serves it when offline. |
+| `map.js` | The vector map. Asked for with a hash in the query, so a fresh page never meets a stale module. |
 | `pwa/icon-*.png` | App icon — a compass rose on paper, drawn with the same PIL primitives as the maps. |
+| `fonts/` | Lora and Poppins, if they were found *and* their licence sits next to them — so the labels on the site are set in the same face the PNG was drawn with. Otherwise the CSS falls back, exactly as the renderer does. |
 
 Installing works from the browser menu ("Install app" / "Add to Home Screen") once
 the page is served over HTTPS — GitHub Pages does that. On the first visit the
@@ -263,3 +287,8 @@ still created, only the typeface looks different.
   ~15 % do not show up in it. For gradient analysis the recorded ride is more
   meaningful — and even there, speed is the more honest indicator than the
   elevation curve.
+- Because of that, the ascent under the profile on the site comes out about a tenth
+  below what komoot shows for the same tour (670 against 750 m, 990 against 1,090 m):
+  it is summed over the exported track, komoot uses its own elevation model. No
+  threshold is applied — every bit of hysteresis widens the gap instead of closing
+  it. The table above stays komoot's figure, the site says where its own comes from.

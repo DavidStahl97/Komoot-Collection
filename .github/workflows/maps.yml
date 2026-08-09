@@ -31,6 +31,8 @@ jobs:
       - name: Fetch fonts
         # Lora and Poppins are not part of the Ubuntu packages. If the download fails,
         # map_cover.py falls back to DejaVu/Liberation — the layout stays the same.
+        # The licences come along because build_site.py ships the fonts with the site, and
+        # it only ships a font whose licence sits next to it.
         run: |
           dir=/usr/share/fonts/truetype/google-fonts
           sudo mkdir -p "$dir"
@@ -39,6 +41,8 @@ jobs:
           get "$base/lora/Lora-Italic%5Bwght%5D.ttf" Lora-Italic-Variable.ttf
           get "$base/poppins/Poppins-Medium.ttf" Poppins-Medium.ttf
           get "$base/poppins/Poppins-Bold.ttf" Poppins-Bold.ttf
+          get "$base/lora/OFL.txt" Lora-OFL.txt
+          get "$base/poppins/OFL.txt" Poppins-OFL.txt
           fc-cache -f > /dev/null
 
       - name: Render maps

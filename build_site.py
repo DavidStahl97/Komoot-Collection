@@ -16,13 +16,17 @@ Result:
 """
 import argparse, hashlib, html, inspect, json, math, os, shutil, sys
 
+import numpy as np
 from PIL import Image, ImageChops, ImageDraw
 
 import icons as IC
-from map_cover import (ACCENT, BOX, F, GPX_ROOT, H, INK, MUTED, OUT_DIR, PAPER, S, W, at, cum,
-                       discover, projection, read_config, route_of, slugify)
+import svgdraw
+from map_cover import (ACCENT, BOX, GPX_ROOT, H, INK, MUTED, OUT_DIR, PAPER, S, W, at,
+                       bg_name, cartouche_box, cum, discover, font_file, icon_of,
+                       projection, read_config, route_of, slugify)
 
 SITE_DIR = 'site'
+MAP_JS_NAME = 'map.js'          # the client module, written next to the pages
 IC_S = 2                        # supersampling of the icon sheets
 IC_PX = 150                     # edge length of an icon sheet in pixels
 
@@ -61,7 +65,12 @@ CSS = """
   .meta { margin: 0; font-size: .85rem; color: #7e7058; font-style: normal; }
   .icons { display: grid; gap: 22px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
   .icon { background: #f6eeda; border: 1px solid #ceba98; padding: 12px; text-align: center; }
-  .icon img { display: block; width: 100%; height: auto; }
+  .icon img, .icon svg { display: block; width: 100%; height: auto; background: #f3e8d0; }
+  /* stamped and recorded side by side — the pair is the check that svgdraw.py still
+     draws what icons.py draws; there is no other test for it */
+  .icon .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .icon .pair em { display: block; font-size: .68rem; font-style: normal; color: #7e7058;
+                   letter-spacing: .08em; }
   .icon code { font-size: .85rem; color: #3b342a; }
   .icon span { display: block; font-size: .78rem; color: #7e7058; font-style: italic; }
   table { border-collapse: collapse; width: 100%; margin: 0 0 32px; }
@@ -72,17 +81,54 @@ CSS = """
   footer { border-top: 1px solid #ceba98; margin-top: 56px; padding-top: 14px;
            font-size: .85rem; color: #7e7058; }
 
-  /* interactive map: the rendered PNG stays the base layer, the SVG only lies on top */
-  .map { position: relative; line-height: 0; border: 1px solid #ceba98; margin: 0 0 12px; }
-  .map img { display: block; width: 100%; height: auto; }
-  .map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .map .hit { fill: none; stroke: transparent; stroke-width: 26; cursor: pointer; }
-  .map .line { fill: none; opacity: 0; transition: opacity .25s ease; pointer-events: none; }
-  .map .line.on { opacity: 1; }
-  .map .veil { opacity: 0; transition: opacity .35s ease; pointer-events: none; }
-  /* the deeper the veil, the more the picked tour and its highlights stand out —
-     that is the emphasis; nothing is drawn on top of the map for it */
-  .map .veil.on { opacity: .84; }
+  /* The interactive map. The painted background is an image, everything that means
+     something is a vector on top of it — so picking a tour is a class name, not a hole
+     cut into a veil, and two tours crossing is not a case that has to be handled. */
+  .mapfig { position: relative; margin: 0 0 12px; border: 1px solid #ceba98; line-height: 0;
+            background: #f3e8d0; aspect-ratio: 4 / 3; }
+  .mapfig:focus-visible { outline: 2px solid #b0603a; outline-offset: 2px; }
+  .zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column;
+          gap: 4px; }
+  .zoom button { width: 32px; height: 32px; font: 16px/1 Georgia, serif; cursor: pointer;
+                 background: #f6eeda; color: #3b342a; border: 1px solid #ceba98; }
+  .zoom button:hover, .zoom button:focus-visible { border-color: #b0603a; }
+  .mapfig > svg, .mapfig img { display: block; width: 100%; height: auto; }
+  .mapfig > svg { touch-action: none; -webkit-user-select: none; user-select: none; }
+  .mapfig .grab { fill: transparent; }
+  .mapfig .casing { fill: none; stroke: #fff; stroke-width: 7; stroke-dasharray: 14 10;
+                    stroke-linecap: butt; stroke-linejoin: round; }
+  .mapfig .dash { fill: none; stroke: #b0603a; stroke-width: 4; stroke-dasharray: 14 10;
+                  stroke-linecap: butt; stroke-linejoin: round; }
+  .mapfig .plate { fill: #f6edd8; }
+  .mapfig .lab text { font: italic 26px "map-label", Georgia, "Times New Roman", serif;
+                      fill: #3b342a; }
+  .mapfig .place .plate { fill: #3b342a; }
+  .mapfig .place text { font: 30px "map-place", "Segoe UI", Helvetica, Arial, sans-serif;
+                        fill: #f3e8d0; }
+  /* What marks the picked tour is that everything else steps back: a sheet of paper over
+     the painted map, and the other lines and highlights fading into it. Nothing is drawn
+     on top of the picked one — being the only thing left in front is the emphasis. */
+  .mapfig .wash { fill: #f3e8d0; opacity: 0; transition: opacity .35s ease; }
+  .mapfig svg.focus .wash { opacity: .58; }
+  .mapfig .route, .mapfig .mark { transition: opacity .25s ease; }
+  .mapfig svg.focus .route { opacity: .13; }
+  .mapfig svg.focus .route.on { opacity: 1; }
+  .mapfig svg.focus .mark { opacity: .10; }
+  .mapfig svg.focus .mark.on { opacity: 1; }
+  .mapfig .cursor circle { fill: #b0603a; stroke: #fff; stroke-width: 2; }
+  /* the elevation profile of the picked tour, its cursor tied to the map both ways */
+  .profile { margin: 0 0 14px; }
+  .profile[hidden] { display: none; }
+  .profile svg { display: block; width: 100%; height: auto; background: #f6eeda;
+                 border: 1px solid #ceba98; }
+  .profile .area { fill: #b0603a; fill-opacity: .16; }
+  .profile .line { fill: none; stroke: #b0603a; stroke-width: 1.5; }
+  .profile .base { stroke: #ceba98; stroke-width: 1; }
+  .profile .rule { stroke: #3b342a; stroke-width: 1; }
+  .profile .tick { font: 13px Georgia, serif; fill: #7e7058; }
+  .profile figcaption { font-size: .82rem; color: #7e7058; font-style: italic;
+                        padding-top: 5px; }
+  .profile .read { font-style: normal; color: #3b342a; }
   .caption { margin: 0 0 26px; font-size: .9rem; color: #7e7058; font-style: italic;
              min-height: 1.4em; }
   .tours { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px;
@@ -99,13 +145,17 @@ CSS = """
   .dim { opacity: .38; }
   .actions { margin: 0 0 30px; font-size: .9rem; }
   .actions a { margin-right: 18px; }
+  /* without JavaScript the map is the plain cover image again, so the controls that only
+     work with it are not offered at all */
+  .no-js .tours { display: none; }
   @media (prefers-reduced-motion: reduce) {
-    .map .veil, .map .line { transition: none; }
+    .mapfig .wash, .mapfig .route, .mapfig .mark { transition: none; }
   }
 """
 
 PAGE = """<!doctype html>
-<html lang="en">
+<html lang="en" class="no-js">
+<script>document.documentElement.classList.remove("no-js");</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{title}</title>
@@ -117,7 +167,7 @@ PAGE = """<!doctype html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="{short}">
 <meta name="mobile-web-app-capable" content="yes">
-<style>{css}</style>
+<style>{css}{styles}</style>
 <script>
   // Progressive web app: the service worker precaches pages, maps and icons, so an
   // installed copy also opens without a network. Registration is optional — without it
@@ -130,7 +180,7 @@ PAGE = """<!doctype html>
 </ul></div></nav>
 <div class="wrap">
 {body}
-<footer>Generated by <a href="https://github.com/{repo}">{repo}</a>{built}.</footer>
+<footer>Generated by <a href="https://github.com/{repo}">{repo}</a>{built}.{credit}</footer>
 </div>
 {script}
 </html>
@@ -150,16 +200,20 @@ def icon_list():
     return out
 
 
+IC_BIG = IC_PX * IC_S * 4       # the sheet an icon is stamped on before it is cropped
+IC_FIT = 0.8                    # share of the sheet the cropped icon is fitted into
+
+
 def stamp(fn, path):
-    """Draw a single icon onto a small sheet of paper.
+    """Draw a single icon onto a small sheet of paper; returns its box around the centre.
 
     The icons reach past their radius by different amounts — fox and shark are wider
     than the lake. So they are stamped large, cropped to what was actually drawn and
-    only then fitted onto the sheet.
+    only then fitted onto the sheet. That measured box is what icon_svg() frames the
+    vector version with, so both end up at the same crop and the same scale.
     """
-    big = IC_PX * IC_S * 4
-    img = Image.new('RGB', (big, big), PAPER)
-    fn(ImageDraw.Draw(img), big / 2, big / 2, big * 0.12)
+    img = Image.new('RGB', (IC_BIG, IC_BIG), PAPER)
+    fn(ImageDraw.Draw(img), IC_BIG / 2, IC_BIG / 2, IC_BIG * 0.12)
     box = ImageChops.difference(img, Image.new('RGB', img.size, PAPER)).getbbox()
     if box is None:
         raise ValueError("icon draws nothing: %s" % fn.__name__)
@@ -172,31 +226,49 @@ def stamp(fn, path):
     sheet = Image.new('RGB', (px, px), PAPER)
     sheet.paste(icon, ((px - icon.width) // 2, (px - icon.height) // 2))
     sheet.resize((IC_PX, IC_PX), Image.LANCZOS).save(path)
+    return (box[0] - IC_BIG / 2, box[1] - IC_BIG / 2,
+            box[2] - IC_BIG / 2, box[3] - IC_BIG / 2)
+
+
+def icon_svg(name, fn, box, cls='vec'):
+    """The same icon as SVG, framed like the stamped sheet.
+
+    Recorded at the same radius the stamp uses, so the width clamps inside icons.py
+    resolve the same way, and framed with the box PIL measured — the two tiles on the
+    icon page are therefore directly comparable, which is the whole point of showing them
+    next to each other.
+    """
+    x0, y0, x1, y1 = box
+    side = max(x1 - x0, y1 - y0) / IC_FIT
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return ('<svg class="%s" viewBox="%s %s %s %s" role="img" aria-label="Icon %s as vector">'
+            '%s</svg>'
+            % (cls, svgdraw.num(cx - side / 2), svgdraw.num(cy - side / 2),
+               svgdraw.num(side), svgdraw.num(side), html.escape(name),
+               svgdraw.record(fn, IC_BIG * 0.12)))
 
 
 # ------------------------------------------------------- interactive overlay
 VIEW = (W // S, H // S)         # the finished image: 1600 x 1200 pixels
 
-
-def measure():
-    """Text width of the two label fonts, in pixels of the finished image.
-
-    The same fonts as in the renderer, so the holes in the veil sit exactly where the
-    labels were drawn — with an estimate the veil clips a label at its edge.
-    """
-    d = ImageDraw.Draw(Image.new('L', (1, 1)))
-    fonts = {'label': F("Lora-Italic-Variable", 26), 'place': F("Poppins-Medium", 30)}
-    return lambda kind, text: d.textlength(text, font=fonts[kind]) / S
+# Label fonts, mirrored from render(): the size is what the SVG uses, the file is what the
+# site ships. Nothing has to line up with the background any more — it carries no labels —
+# but a map whose two halves are set in different faces reads as two maps.
+LABEL_FONTS = {'label': ("Lora-Italic-Variable", 26),
+               'place': ("Poppins-Medium", 30)}
 
 
 def rdp(pts, tol):
-    """Ramer-Douglas-Peucker: drop points that no one can see anyway.
+    """Ramer-Douglas-Peucker: the indices of the points nobody can do without.
 
-    A GPX track has thousands of points; at 1600 pixels width a tolerance of one pixel
-    keeps the line identical to the drawn one and the page small.
+    Indices, not points, because the elevation profile has to find its way back from a
+    place on the line to the kilometre it sits at. The tolerance is a quarter pixel of the
+    finished image, not a whole one: the line is zoomable now, and at four times the size
+    a whole pixel of error walks visibly out of the tree-free corridor the background was
+    stamped around it.
     """
     if len(pts) < 3:
-        return list(pts)
+        return list(range(len(pts)))
     keep = [False] * len(pts)
     keep[0] = keep[-1] = True
     stack = [(0, len(pts) - 1)]
@@ -215,265 +287,604 @@ def rdp(pts, tol):
         if bi > 0 and best > tol:
             keep[bi] = True
             stack.append((i0, bi)); stack.append((bi, i1))
-    return [p for p, k in zip(pts, keep) if k]
+    return [i for i, k in enumerate(keep) if k]
 
 
-def label_box(x, y, tw, offset, side, height):
-    """Where a label sits on the map — mirrors the label drawing in map_cover.render.
+PROFILE_N = 400                 # samples of one elevation profile
 
-    The margin around the drawn plate is wider than the blur of the hole (see MAP_JS),
-    otherwise the soft edge would reach into the text and veil it half way. Not much
-    wider, though: „Lahn bei Löhnberg" ends a few pixels from the cartouche, and every
-    pixel of margin too many pulls its border out of the veil along with it.
+
+def profile(route, ele):
+    """Elevation sampled evenly along the distance, plus the ascent that follows from it.
+
+    Evenly by distance, so the index is the position along the tour and no kilometre
+    values have to travel with it. The ascent is summed over the whole track rather than
+    over the samples, and without a threshold: measured against komoot the sum already
+    comes out about a tenth low, and every bit of hysteresis widens that gap instead of
+    closing it. komoot uses its own elevation model, not the exported track.
     """
-    ox, oy = offset
-    tx = x + ox
-    if side == 'c':
-        tx -= tw / 2
-    elif side != 'r':
-        tx -= tw
-    return [round(tx - 18, 1), round(y + oy - 16, 1), round(tw + 36, 1), round(height + 32, 1)]
+    if ele is None or len(ele) != len(route):
+        return None
+    c = cum(route)
+    total = float(c[-1])
+    if total <= 0:
+        return None
+    ys = np.interp(np.linspace(0, total, PROFILE_N), c, ele)
+    return {'ele': [int(round(float(v))) for v in ys],
+            'lo': int(round(float(ys.min()))), 'hi': int(round(float(ys.max()))),
+            'ascent': int(round(float(np.clip(np.diff(ele), 0, None).sum()), -1))}
 
 
-def geometry(cfg):
-    """Routes, highlights and endpoints as pixel positions in the finished image.
+def geometry(cfg, bg):
+    """Everything the interactive map draws, in pixels of the finished image.
 
-    Uses the same projection as the renderer, only with the map frame scaled down by the
-    supersampling — so the overlay lands exactly on the drawn lines.
+    The same projection as the renderer, only with the map frame scaled down by the
+    supersampling — so the vector lines land exactly in the tree-free corridors the
+    background was stamped around them. Label boxes are not in here: the browser measures
+    its own text, which is the one thing this file used to have to guess.
     """
     order = cfg['_order']
     routes = [cfg['_routes'][k] for k in order]
     P, PA = projection(routes, tuple(v / S for v in BOX))
-    width = measure()
 
-    data = {'view': list(VIEW), 'routes': [], 'highlights': [], 'endpoints': []}
+    data = {'view': list(VIEW), 'sup': S, 'bg': bg, 'guard': [], 'icons': {},
+            'label': "Map of the collection %s" % cfg['name'],
+            'routes': [], 'highlights': [], 'endpoints': []}
+
+    # The cartouche is filled opaquely and sits inside the map frame: on the drawn map the
+    # routes run underneath it, so the vector layer has to be clipped out of it.
+    box = cartouche_box(cfg)
+    if box:
+        x0, y0, x1, y1 = (v / S for v in box)
+        data['guard'].append([round(x0, 1), round(y0, 1),
+                              round(x1 - x0, 1), round(y1 - y0, 1)])
+
+    def icon(name, size):
+        """Record an icon once per name and size; the key is its id in the page."""
+        key = '%s-%g' % (name, size)
+        if key not in data['icons']:
+            # recorded at the radius the renderer passes, placed with a matching scale(1/S)
+            data['icons'][key] = svgdraw.record(icon_of(name), size * S)
+        return key
+
     for key in order:
         r = cfg['_routes'][key]
-        pts = [(round(x, 1), round(y, 1)) for x, y in PA(r)]
-        data['routes'].append({
+        pts = PA(r)
+        c = cum(r)
+        total = float(c[-1]) or 1.0
+        entry = {
             'key': key,
             'label': cfg['_labels'].get(key, key),
             'file': cfg['_files'].get(key, ''),
-            'km': round(float(cum(r)[-1]) / 1000, 1),
-            'points': [list(p) for p in rdp(pts, 1.0)],
-        })
+            'km': round(total / 1000, 1),
+            # x, y and the position along the tour in per mille — the third number is what
+            # ties a place on the map to a place in the elevation profile
+            'pts': [[round(pts[i][0], 1), round(pts[i][1], 1), int(round(c[i] / total * 1000))]
+                    for i in rdp(pts, 0.25)],
+        }
+        entry.update(profile(r, cfg.get('_ele', {}).get(key)) or {})
+        data['routes'].append(entry)
 
     for hl in cfg['highlights']:
         lat, lon = (hl['lat'], hl['lon']) if 'lat' in hl else at(route_of(cfg, hl['route']), hl['km'])
         x, y = P(lat, lon)
         size = hl.get('size', 34)
+        ox, oy = hl.get('offset', (14, 44))
         data['highlights'].append({
-            'label': hl['label'], 'route': hl.get('route'), 'icon': hl.get('icon'),
-            'km': hl.get('km'), 'x': round(x, 1), 'y': round(y, 1), 'r': size,
-            'box': label_box(x, y, width('label', hl['label']) + 18,
-                             hl.get('offset', (14, 44)), hl.get('side', 'r'), 26),
+            'label': hl['label'], 'route': hl.get('route'), 'km': hl.get('km'),
+            'icon': icon(hl['icon'], size), 'size': size,
+            'x': round(x, 1), 'y': round(y, 1),
+            'ax': round(x + ox, 1), 'ay': round(y + oy, 1),
+            'side': hl.get('side', 'r'), 'font': 'label',
         })
 
     for ep in cfg['endpoints']:
         x, y = P(ep['lat'], ep['lon'])
         size = ep.get('size', 44)
         data['endpoints'].append({
-            'label': ep['label'], 'x': round(x, 1), 'y': round(y, 1), 'r': size,
-            'box': label_box(x, y, width('place', ep['label']) + 28, (0, 62), 'c', 30),
+            'label': ep['label'], 'icon': icon(ep['icon'], size), 'size': size,
+            'x': round(x, 1), 'y': round(y, 1),
+            'ax': round(x, 1), 'ay': round(y + 62, 1),
+            'side': 'c', 'font': 'place',
         })
     return data
 
 
-MAP_JS = """
-// Interactive layer over the cover image: picking a tour dims everything else.
-// The image itself is untouched — the SVG only lies on top, and without JavaScript
-// the page stays what it was, a map with a download link.
-(function () {
-  var geo = %(geo)s;
-  var fig = document.querySelector(".map");
-  if (!fig || !geo.routes.length || !document.createElementNS) return;
+def data_island(geo):
+    """The geometry as a JSON block in the page.
 
-  var NS = "http://www.w3.org/2000/svg", VW = geo.view[0], VH = geo.view[1];
+    "</" would end the script element early; "\\/" is a legal escape inside a JSON string,
+    so the block stays parseable.
+    """
+    return ('<script type="application/json" id="map-data">%s</script>'
+            % json.dumps(geo, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/'))
+
+
+MAP_JS = r"""// Interactive map of a collection — generated by build_site.py, do not edit in site/.
+//
+// The background image carries only what is painted: paper, woodland, rivers, compass and
+// cartouche. Everything that means something — the routes, the highlights, the endpoints —
+// is drawn here as vectors from the same projection the renderer used. Picking a tour is
+// therefore two class names, not a hole cut into a veil, and two tours crossing is not a
+// case at all: they are separate elements and always were.
+(function () {
+  var fig = document.querySelector(".mapfig");
+  var island = document.getElementById("map-data");
+  if (!fig || !island || !document.createElementNS || !window.DOMParser) return;
+
+  var geo = JSON.parse(island.textContent);
+  if (!geo.routes.length || !geo.bg) return;
+
+  var NS = "http://www.w3.org/2000/svg";
+  var VW = geo.view[0], VH = geo.view[1];
+  var ICON = 1 / geo.sup;          // icons are recorded supersampled, like the renderer draws them
+  var PICK = 14;                   // how near a pointer has to come to a line, in CSS pixels
+
   function el(name, attrs) {
     var e = document.createElementNS(NS, name);
     for (var k in attrs) e.setAttribute(k, attrs[k]);
     return e;
   }
-  function path(points) {
-    return "M" + points.map(function (p) { return p[0] + " " + p[1]; }).join("L");
+  function frag(markup) {
+    // the recorded icons arrive as markup; parsing them as a document keeps this
+    // independent of innerHTML on SVG elements
+    var doc = new DOMParser().parseFromString(
+      '<svg xmlns="' + NS + '">' + markup + '</svg>', "image/svg+xml");
+    var out = document.createDocumentFragment();
+    if (doc.documentElement.nodeName === "parsererror") return out;
+    // a snapshot, because importNode copies and would leave the list untouched
+    [].slice.call(doc.documentElement.childNodes).forEach(function (k) {
+      out.appendChild(document.importNode(k, true));
+    });
+    return out;
+  }
+  function d_of(pts) {
+    return "M" + pts.map(function (p) { return p[0] + " " + p[1]; }).join("L");
   }
 
-  var svg = el("svg", {viewBox: "0 0 " + VW + " " + VH, "aria-hidden": "true"});
+  // ------------------------------------------------------------------ build
+  var svg = el("svg", {viewBox: "0 0 " + VW + " " + VH, "class": "map",
+                       role: "img", "aria-label": geo.label || "Map of the collection"});
   var defs = el("defs");
-
-  // The veil is a sheet of paper with holes: the picked tour and the two endpoints stay
-  // clear, so what shows through is the drawn map itself, not a redrawn copy of it.
-  var blur = el("filter", {id: "map-soft", x: "-20%%", y: "-20%%",
-                           width: "140%%", height: "140%%"});
-  blur.appendChild(el("feGaussianBlur", {stdDeviation: 9}));
-  defs.appendChild(blur);
-  // The covers hug icon and plate closely, so their edge has to be crisper than the one
-  // of the holes — with the wide blur a foreign label would only be half covered.
-  var tight = el("filter", {id: "map-edge", x: "-20%%", y: "-20%%",
-                            width: "140%%", height: "140%%"});
-  tight.appendChild(el("feGaussianBlur", {stdDeviation: 4}));
-  defs.appendChild(tight);
-
-  var mask = el("mask", {id: "map-spot", maskUnits: "userSpaceOnUse",
-                         x: 0, y: 0, width: VW, height: VH});
-  mask.appendChild(el("rect", {x: 0, y: 0, width: VW, height: VH, fill: "#fff"}));
-
-  function patch(parent, shapes, tone, edge) {
-    var g = el("g", {fill: tone, stroke: tone, filter: "url(#" + edge + ")"});
-    shapes.forEach(function (s) { g.appendChild(s); });
-    parent.appendChild(g);
-    return g;
-  }
-  function hole(parent, shapes) { return patch(parent, shapes, "#000", "map-soft"); }
-  function cover(parent, shapes) { return patch(parent, shapes, "#fff", "map-edge"); }
-
-  // A highlight of another tour must not ride along just because it happens to lie in the
-  // corridor of the picked route — the corridor is wide, its labels reach further still.
-  // So the cut-out corridor is painted over again where a foreign highlight sits, with a
-  // margin wider than the blur so no letter survives at the edge.
-  function marks(h, pad) {
-    return [el("circle", {cx: h.x, cy: h.y, r: h.r * 1.7 + pad}),
-            el("rect", {x: h.box[0] - pad, y: h.box[1] - pad, rx: 16,
-                        width: h.box[2] + 2 * pad, height: h.box[3] + 2 * pad})];
-  }
-
-  // Narrow on purpose: the corridor is meant to free the drawn line, not its
-  // neighbourhood. Every pixel wider takes a parallel route or a foreign tree with it.
-  function corridor(r) {
-    return el("path", {d: path(r.points), fill: "none", "stroke-width": 40,
-                       "stroke-linejoin": "round", "stroke-linecap": "round"});
-  }
-
-  var cuts = {}, hides = {}, lines = {};
-  geo.routes.forEach(function (r) {
-    // No extra air around the highlights: `label_box` is generous enough, and every pixel
-    // more reaches into the cartouche or into a neighbouring label.
-    var shapes = [corridor(r)];
-    geo.highlights.forEach(function (h) {
-      if (h.route === r.key) shapes.push.apply(shapes, marks(h, 0));
-    });
-    var g = hole(mask, shapes);
-    g.setAttribute("display", "none");
-    cuts[r.key] = g;
-  });
-  geo.routes.forEach(function (r) {
-    // The cover hugs what is actually drawn (negative padding), it does not take the air
-    // around it: „Der Knoten" sits on the Ulmtalradweg, and a wide cover would break that
-    // route in two. Under icon and plate the route is invisible anyway — the renderer
-    // draws them over it — so the picked tour stays unbroken in everything one can see.
-    var shapes = [];
-    geo.highlights.forEach(function (h) {
-      if (h.route !== r.key) shapes.push.apply(shapes, marks(h, -16));
-    });
-    if (!shapes.length) return;
-    var g = cover(mask, shapes);           // after the cuts, so it wins over them
-    g.setAttribute("display", "none");
-    hides[r.key] = g;
-  });
-
-  var always = [];                         // start and finish belong to every tour
-  geo.endpoints.forEach(function (e) {
-    always.push(el("circle", {cx: e.x, cy: e.y, r: e.r * 1.7}));
-    always.push(el("rect", {x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3], rx: 16}));
-  });
-  if (always.length) hole(mask, always);   // last, so no cover reaches into them
-  defs.appendChild(mask);
-
-  // On the drawn map the highlights lie above the routes — the line drawn on top has to
-  // keep to that, otherwise it runs straight through icon and label. So it is masked out
-  // wherever a highlight or an endpoint sits.
-  var over = el("mask", {id: "map-over", maskUnits: "userSpaceOnUse",
-                         x: 0, y: 0, width: VW, height: VH});
-  over.appendChild(el("rect", {x: 0, y: 0, width: VW, height: VH, fill: "#fff"}));
-  var above = [];
-  geo.highlights.forEach(function (h) { above.push.apply(above, marks(h, 0)); });
-  geo.endpoints.forEach(function (e) {
-    above.push(el("circle", {cx: e.x, cy: e.y, r: e.r * 1.7}));
-    above.push(el("rect", {x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3], rx: 16}));
-  });
-  if (above.length) hole(over, above);
-  defs.appendChild(over);
-
   svg.appendChild(defs);
 
-  svg.appendChild(el("rect", {"class": "veil", x: 0, y: 0, width: VW, height: VH,
-                              fill: "%(paper)s", mask: "url(#map-spot)"}));
+  for (var key in geo.icons) {
+    var sym = el("g", {id: "ic-" + key});
+    sym.appendChild(frag(geo.icons[key]));
+    defs.appendChild(sym);
+  }
 
-  // the picked tour once more on top, in the dashed style of the map
+  // the vector layer keeps out of the cartouche, which is painted over it on the drawn map
+  var clipId = null;
+  if (geo.guard.length) {
+    clipId = "map-guard";
+    var holes = "M0 0H" + VW + "V" + VH + "H0Z";
+    geo.guard.forEach(function (g) {
+      holes += "M" + g[0] + " " + g[1] + "h" + g[2] + "v" + g[3] + "h" + (-g[2]) + "Z";
+    });
+    var clip = el("clipPath", {id: clipId, clipPathUnits: "userSpaceOnUse"});
+    clip.appendChild(el("path", {d: holes, "clip-rule": "evenodd"}));
+    defs.appendChild(clip);
+  }
+
+  svg.appendChild(el("image", {href: geo.bg, x: 0, y: 0, width: VW, height: VH,
+                               preserveAspectRatio: "none"}));
+  svg.appendChild(el("rect", {"class": "wash", x: 0, y: 0, width: VW, height: VH}));
+
+  var vec = el("g", {"class": "vec"});
+  if (clipId) vec.setAttribute("clip-path", "url(#" + clipId + ")");
+  svg.appendChild(vec);
+
+  var gRoutes = el("g", {"class": "routes"});
+  var gMarks = el("g", {"class": "marks"});
+  var gCursor = el("g", {"class": "cursor"});
+  var dot = el("circle", {r: 7});
+  gCursor.appendChild(dot);
+  gCursor.style.display = "none";
+  vec.appendChild(gRoutes); vec.appendChild(gMarks); vec.appendChild(gCursor);
+
+  var routeG = {}, byKey = {};
   geo.routes.forEach(function (r) {
-    var d = path(r.points), g = el("g", {"class": "line", mask: "url(#map-over)"});
-    g.appendChild(el("path", {d: d, fill: "none", stroke: "%(paper)s", "stroke-width": 8,
-                              "stroke-linejoin": "round", "stroke-linecap": "round"}));
-    g.appendChild(el("path", {d: d, fill: "none", stroke: "%(accent)s", "stroke-width": 4,
-                              "stroke-dasharray": "14 10", "stroke-linejoin": "round"}));
-    svg.appendChild(g);
-    lines[r.key] = g;
+    byKey[r.key] = r;
+    var g = el("g", {"class": "route", "data-key": r.key});
+    var d = d_of(r.pts);
+    g.appendChild(el("path", {"class": "casing", d: d}));
+    g.appendChild(el("path", {"class": "dash", d: d}));
+    gRoutes.appendChild(g);
+    routeG[r.key] = g;
   });
 
-  // hit areas last, so they lie above everything and stay clickable
-  geo.routes.forEach(function (r) {
-    var hit = el("path", {"class": "hit", d: path(r.points)});
-    hit.addEventListener("click", function () { pick(picked === r.key ? null : r.key); });
-    hit.addEventListener("mouseenter", function () { peek(r.key); });
-    hit.addEventListener("mouseleave", function () { peek(null); });
-    svg.appendChild(hit);
-  });
-  fig.appendChild(svg);
+  // Highlights and endpoints sit above the routes, exactly as the renderer stacks them —
+  // which is why the line no longer has to be masked out from under icon and plate.
+  var marks = [];
+  function mark(m, kind) {
+    var g = el("g", {"class": "mark " + kind});
+    if (m.route) g.setAttribute("data-route", m.route);
+    var use = el("use", {"class": "sym"});
+    use.setAttribute("href", "#ic-" + m.icon);
+    use.setAttribute("transform", "translate(" + m.x + "," + m.y + ") scale(" + ICON + ")");
+    g.appendChild(use);
 
-  var veil = svg.querySelector(".veil");
+    var lab = el("g", {"class": "lab"});
+    var plate = el("rect", {"class": "plate", rx: 2});
+    var text = el("text", {x: 0, y: 0});
+    text.setAttribute("text-anchor", m.side === "c" ? "middle" : (m.side === "r" ? "start" : "end"));
+    text.textContent = m.label;
+    lab.appendChild(plate); lab.appendChild(text);
+    g.appendChild(lab);
+    gMarks.appendChild(g);
+    marks.push({data: m, g: g, use: use, lab: lab, plate: plate, text: text,
+                pad: kind === "place" ? 14 : 9});
+  }
+  geo.highlights.forEach(function (h) { mark(h, "spot"); });
+  geo.endpoints.forEach(function (e) { mark(e, "place"); });
+
+  var grab = el("rect", {"class": "grab", x: 0, y: 0, width: VW, height: VH});
+  svg.appendChild(grab);
+
+  fig.insertBefore(svg, fig.firstChild);
+  fig.setAttribute("tabindex", "0");
+
+  // ------------------------------------------------------------ zoom and pan
+  // The view is the viewBox: one coordinate system for image and vectors, so nothing can
+  // drift apart. Routes scale with the map — a line width is map content — while icons and
+  // plates scale against it and keep their size on screen. Otherwise the labels would be
+  // the only thing left at four times in, which is when you wanted to read what is under
+  // them.
+  var MAXK = 4;
+  var view = {x: 0, y: 0, w: VW, h: VH};
+
+  function place() {
+    var k = VW / view.w;
+    dot.setAttribute("r", (7 / k).toFixed(2));
+    marks.forEach(function (m) {
+      m.use.setAttribute("transform",
+        "translate(" + m.data.x + "," + m.data.y + ") scale(" + (ICON / k).toFixed(4) + ")");
+      m.lab.setAttribute("transform",
+        "translate(" + m.data.ax + "," + m.data.ay + ") scale(" + (1 / k).toFixed(4) + ")");
+    });
+  }
+  function apply() {
+    svg.setAttribute("viewBox", [view.x.toFixed(2), view.y.toFixed(2),
+                                 view.w.toFixed(2), view.h.toFixed(2)].join(" "));
+    fig.classList.toggle("zoomed", view.w < VW - 0.5);
+    place();
+  }
+  function setZoom(k, ux, uy) {
+    k = Math.max(1, Math.min(MAXK, k));
+    var w = VW / k, h = VH / k;
+    // keep the point under the pointer where it is
+    view.x = ux - (ux - view.x) * (w / view.w);
+    view.y = uy - (uy - view.y) * (h / view.h);
+    view.w = w; view.h = h;
+    clamp();
+    apply();
+  }
+  function clamp() {
+    view.x = Math.max(0, Math.min(VW - view.w, view.x));
+    view.y = Math.max(0, Math.min(VH - view.h, view.y));
+  }
+  function panBy(dx, dy) { view.x += dx; view.y += dy; clamp(); apply(); }
+
+  var zoomBar = document.createElement("div");
+  zoomBar.className = "zoom";
+  [["+", "Zoom in", function () { setZoom(VW / view.w * 1.6, view.x + view.w / 2, view.y + view.h / 2); }],
+   ["−", "Zoom out", function () { setZoom(VW / view.w / 1.6, view.x + view.w / 2, view.y + view.h / 2); }],
+   ["⤡", "Whole map", function () { setZoom(1, VW / 2, VH / 2); }]
+  ].forEach(function (b) {
+    var el2 = document.createElement("button");
+    el2.type = "button"; el2.textContent = b[0]; el2.title = b[1];
+    el2.setAttribute("aria-label", b[1]);
+    el2.addEventListener("click", b[2]);
+    zoomBar.appendChild(el2);
+  });
+  fig.appendChild(zoomBar);
+
+  // The plate is measured, not calculated: the browser knows how wide its own text is, and
+  // the drawn map no longer carries a label this has to agree with. Twice, because before
+  // the web font has loaded the fallback gives a narrower box.
+  //
+  // Everything is laid out around the anchor at the origin, so that scale() can be hung in
+  // front of it later without the offsets riding along.
+  function layout() {
+    marks.forEach(function (m) {
+      var bb;
+      m.text.setAttribute("y", 0);
+      try { bb = m.text.getBBox(); } catch (e) { return; }
+      m.text.setAttribute("y", (-bb.y).toFixed(1));    // the renderer puts the top of the
+      m.plate.setAttribute("x", (bb.x - m.pad).toFixed(1));   // text at the anchor
+      m.plate.setAttribute("y", -5);
+      m.plate.setAttribute("width", (bb.width + 2 * m.pad).toFixed(1));
+      m.plate.setAttribute("height", (bb.height + 12).toFixed(1));
+    });
+    place();
+  }
+
+  // ------------------------------------------------------------------ state
+  var st = {picked: null, hovered: null};
   var caption = document.querySelector(".caption");
-  var buttons = {}, rows = document.querySelectorAll("[data-route]");
-  Array.prototype.forEach.call(document.querySelectorAll(".tours button"), function (b) {
+  var buttons = [].slice.call(document.querySelectorAll(".tours button[data-key]"));
+  var rows = [].slice.call(document.querySelectorAll("tr[data-route]"));
+  var intro = caption ? caption.textContent : "";
+
+  function draw() {
+    var key = st.hovered || st.picked;
+    svg.classList.toggle("focus", !!key);
+    geo.routes.forEach(function (r) {
+      routeG[r.key].classList.toggle("on", r.key === key);
+    });
+    marks.forEach(function (m) {
+      m.g.classList.toggle("on", !m.data.route || m.data.route === key);
+    });
+    if (key) gRoutes.appendChild(routeG[key]);      // the picked line belongs on top
+    buttons.forEach(function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-key") === st.picked ? "true" : "false");
+    });
+    rows.forEach(function (tr) {
+      var r = tr.getAttribute("data-route");
+      tr.classList.toggle("dim", !!key && !!r && r !== key);
+    });
+    if (caption) {
+      var r = key && byKey[key];
+      var n = r ? count(key) : 0;
+      caption.textContent = r
+        ? (r.label + " — " + comma(r.km, 1) + " km, "
+           + (n === 0 ? "no highlights" : n === 1 ? "one highlight" : n + " highlights"))
+        : intro;
+    }
+    drawProfile();
+    drawCursor();
+  }
+  function count(key) {
+    return geo.highlights.filter(function (h) { return h.route === key; }).length;
+  }
+  function pick(key) {
+    st.picked = key && byKey[key] ? key : null;
+    if (history.replaceState)
+      history.replaceState(null, "",
+        st.picked ? "#tour-" + st.picked : location.pathname + location.search);
+    draw();
+  }
+  function peek(key) { st.hovered = key && byKey[key] ? key : null; draw(); }
+  function comma(v, digits) { return v.toFixed(digits).replace(".", ","); }
+
+  // --------------------------------------------------------- elevation profile
+  // One profile, re-pathed on every change instead of one hidden copy per tour: only ever
+  // one is shown, and "hovered or picked" is the same expression the map runs on.
+  var PW = 1000, PH = 170, PL = 46, PR = 12, PT = 12, PB = 26;
+  var pbox = null, psvg, pArea, pLine, pBase, pRule, pHi, pLo, pNote, pRead, pcur = null;
+
+  if (geo.routes.some(function (r) { return r.ele && r.ele.length; })) {
+    pbox = document.createElement("figure");
+    pbox.className = "profile";
+    psvg = el("svg", {viewBox: "0 0 " + PW + " " + PH, role: "img",
+                      "aria-label": "Elevation profile of the picked tour"});
+    pArea = el("path", {"class": "area"});
+    pLine = el("path", {"class": "line"});
+    pBase = el("line", {"class": "base", x1: PL, x2: PW - PR});
+    pRule = el("line", {"class": "rule", y1: PT, y2: PH - PB});
+    pHi = el("text", {"class": "tick", x: PL - 8, y: PT + 9, "text-anchor": "end"});
+    pLo = el("text", {"class": "tick", x: PL - 8, y: PH - PB, "text-anchor": "end"});
+    [pArea, pLine, pBase, pRule, pHi, pLo].forEach(function (n) { psvg.appendChild(n); });
+    pNote = document.createElement("figcaption");
+    pRead = document.createElement("span");
+    pRead.className = "read";
+    pNote.appendChild(document.createElement("span"));
+    pNote.appendChild(pRead);
+    pbox.appendChild(psvg); pbox.appendChild(pNote);
+    // below the caption, which already carries the name and the distance
+    var after = caption || fig;
+    after.parentNode.insertBefore(pbox, after.nextSibling);
+
+    psvg.addEventListener("pointermove", function (ev) {
+      var b = psvg.getBoundingClientRect();
+      if (!b.width || !pcur) return;
+      var f = ((ev.clientX - b.left) / b.width * PW - PL) / (PW - PL - PR);
+      st.cursor = Math.max(0, Math.min(1, f)) * 1000;
+      drawCursor();
+    });
+    psvg.addEventListener("pointerleave", function () { st.cursor = null; drawCursor(); });
+  }
+
+  function drawProfile() {
+    if (!pbox) return;
+    var key = st.hovered || st.picked, r = key && byKey[key];
+    pcur = (r && r.ele && r.ele.length) ? r : null;
+    pbox.hidden = !pcur;
+    if (!pcur) { st.cursor = null; return; }
+    var n = r.ele.length, span = Math.max(1, r.hi - r.lo);
+    var iw = PW - PL - PR, ih = PH - PT - PB, base = PT + ih;
+    pcur.X = function (i) { return PL + i / (n - 1) * iw; };
+    pcur.Y = function (v) { return PT + (1 - (v - r.lo) / span) * ih; };
+    var d = "";
+    for (var i = 0; i < n; i++)
+      d += (i ? "L" : "M") + pcur.X(i).toFixed(1) + " " + pcur.Y(r.ele[i]).toFixed(1);
+    pLine.setAttribute("d", d);
+    pArea.setAttribute("d", d + "L" + pcur.X(n - 1).toFixed(1) + " " + base
+                             + "L" + PL + " " + base + "Z");
+    pBase.setAttribute("y1", base); pBase.setAttribute("y2", base);
+    pHi.textContent = r.hi + " m"; pLo.textContent = r.lo + " m";
+    pNote.firstChild.textContent =
+      r.lo + "–" + r.hi + " m · " + r.ascent + " m of ascent, from the GPX track";
+  }
+
+  // Where along the tour a per mille mark lands on the map — the third number of every
+  // point is exactly what makes this a lookup rather than a second measurement.
+  function along(r, t) {
+    var p = r.pts, lo = 0, hi = p.length - 1;
+    while (lo < hi - 1) {
+      var mid = (lo + hi) >> 1;
+      if (p[mid][2] <= t) lo = mid; else hi = mid;
+    }
+    var span = p[hi][2] - p[lo][2];
+    var f = span > 0 ? (t - p[lo][2]) / span : 0;
+    return [p[lo][0] + (p[hi][0] - p[lo][0]) * f, p[lo][1] + (p[hi][1] - p[lo][1]) * f];
+  }
+
+  function drawCursor() {
+    var show = pcur && st.cursor !== null && st.cursor !== undefined;
+    gCursor.style.display = show ? "" : "none";
+    if (pRule) pRule.style.display = show ? "" : "none";
+    if (pRead) pRead.textContent = "";
+    if (!show) return;
+    var n = pcur.ele.length;
+    var i = Math.max(0, Math.min(n - 1, Math.round(st.cursor / 1000 * (n - 1))));
+    var x = pcur.X(i);
+    pRule.setAttribute("x1", x.toFixed(1)); pRule.setAttribute("x2", x.toFixed(1));
+    var p = along(pcur, st.cursor);
+    dot.setAttribute("cx", p[0].toFixed(1)); dot.setAttribute("cy", p[1].toFixed(1));
+    pRead.textContent = " · km " + comma(pcur.km * st.cursor / 1000, 1)
+                      + " · " + pcur.ele[i] + " m";
+  }
+
+  // -------------------------------------------------------------- hit testing
+  // One computation over the real lines instead of stacked click paths: where two tours
+  // overlap, both are reachable and the nearer one wins — not whichever was drawn last.
+  function segDist(px, py, ax, ay, bx, by) {
+    var dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    var t = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    var qx = ax + t * dx - px, qy = ay + t * dy - py;
+    return {d: Math.sqrt(qx * qx + qy * qy), t: t};
+  }
+  function nearest(px, py, tol) {
+    var best = null;
+    geo.routes.forEach(function (r) {
+      var pts = r.pts, bd = Infinity, bt = 0;
+      for (var i = 1; i < pts.length; i++) {
+        var s = segDist(px, py, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+        if (s.d < bd) {
+          bd = s.d;
+          bt = pts[i - 1][2] + (pts[i][2] - pts[i - 1][2]) * s.t;
+        }
+      }
+      // a near tie goes to the tour already picked, so a shared stretch does not flicker
+      if (!best || bd < best.d - 0.5 || (Math.abs(bd - best.d) <= 0.5 && r.key === st.picked))
+        best = {key: r.key, d: bd, t: bt};
+    });
+    return best && best.d <= tol ? best : null;
+  }
+  function atPointer(ev) {
+    var b = svg.getBoundingClientRect();
+    if (!b.width || !b.height) return null;
+    return {x: view.x + (ev.clientX - b.left) / b.width * view.w,
+            y: view.y + (ev.clientY - b.top) / b.height * view.h,
+            tol: PICK * view.w / b.width,
+            sx: view.w / b.width, sy: view.h / b.height};
+  }
+
+  // ------------------------------------------------------------------ input
+  // The bare wheel scrolls the page: a figure this wide that swallows it is unpleasant on
+  // a laptop and impossible on a phone. Zooming is ctrl/⌘ plus wheel, pinch, double click
+  // or the buttons.
+  var pointers = {}, drag = null, moved = 0;
+
+  function pointerList() {
+    var out = []; for (var id in pointers) out.push(pointers[id]); return out;
+  }
+  svg.addEventListener("pointerdown", function (ev) {
+    pointers[ev.pointerId] = {x: ev.clientX, y: ev.clientY};
+    if (svg.setPointerCapture) svg.setPointerCapture(ev.pointerId);
+    var list = pointerList();
+    moved = 0;
+    drag = list.length === 1
+      ? {mode: "pan", x: ev.clientX, y: ev.clientY}
+      : {mode: "pinch",
+         d: Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y),
+         k: VW / view.w};
+    cursor();
+  });
+  svg.addEventListener("pointermove", function (ev) {
+    var p = atPointer(ev);
+    if (!p) return;
+    if (pointers[ev.pointerId]) {
+      pointers[ev.pointerId] = {x: ev.clientX, y: ev.clientY};
+      var list = pointerList();
+      if (drag && drag.mode === "pinch" && list.length >= 2) {
+        var d = Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y);
+        if (drag.d > 0) {
+          var b = svg.getBoundingClientRect();
+          var mx = view.x + ((list[0].x + list[1].x) / 2 - b.left) / b.width * view.w;
+          var my = view.y + ((list[0].y + list[1].y) / 2 - b.top) / b.height * view.h;
+          setZoom(drag.k * d / drag.d, mx, my);
+        }
+        moved = 99;
+        return;
+      }
+      if (drag && drag.mode === "pan") {
+        var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+        moved += Math.abs(dx) + Math.abs(dy);
+        drag.x = ev.clientX; drag.y = ev.clientY;
+        if (view.w < VW) { panBy(-dx * p.sx, -dy * p.sy); return; }
+      }
+    }
+    var hit = nearest(p.x, p.y, p.tol);
+    peek(hit ? hit.key : null);
+    cursor(!!hit);
+    // running along the line moves the cursor in the profile, and the other way round
+    st.cursor = (hit && pcur && hit.key === pcur.key) ? hit.t : null;
+    drawCursor();
+  });
+  function release(ev) {
+    delete pointers[ev.pointerId];
+    if (!pointerList().length) drag = null;
+    cursor();
+  }
+  svg.addEventListener("pointerup", release);
+  svg.addEventListener("pointercancel", release);
+  svg.addEventListener("pointerleave", function (ev) { release(ev); peek(null); });
+
+  function cursor(over) {
+    svg.style.cursor = drag && drag.mode === "pan" && view.w < VW ? "grabbing"
+      : (over ? "pointer" : (view.w < VW ? "grab" : ""));
+  }
+
+  svg.addEventListener("click", function (ev) {
+    if (moved > 6) return;                       // that was a drag, not a pick
+    var p = atPointer(ev);
+    var hit = p && nearest(p.x, p.y, p.tol);
+    pick(hit && hit.key !== st.picked ? hit.key : null);
+  });
+  svg.addEventListener("dblclick", function (ev) {
+    var p = atPointer(ev);
+    if (p) setZoom(VW / view.w * (ev.shiftKey ? 1 / 2 : 2), p.x, p.y);
+  });
+  svg.addEventListener("wheel", function (ev) {
+    if (!ev.ctrlKey && !ev.metaKey) return;      // let the page scroll
+    ev.preventDefault();
+    var p = atPointer(ev);
+    if (p) setZoom(VW / view.w * Math.pow(0.9985, ev.deltaY), p.x, p.y);
+  }, {passive: false});
+
+  fig.addEventListener("keydown", function (ev) {
+    var step = view.w / 8, k = VW / view.w;
+    var keys = {ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+                ArrowUp: [0, -step], ArrowDown: [0, step]};
+    if (keys[ev.key]) { panBy(keys[ev.key][0], keys[ev.key][1]); ev.preventDefault(); }
+    else if (ev.key === "+" || ev.key === "=") setZoom(k * 1.6, view.x + view.w / 2, view.y + view.h / 2);
+    else if (ev.key === "-") setZoom(k / 1.6, view.x + view.w / 2, view.y + view.h / 2);
+    else if (ev.key === "0") setZoom(1, VW / 2, VH / 2);
+  });
+
+  buttons.forEach(function (b) {
     var key = b.getAttribute("data-key");
-    buttons[key] = b;
-    b.addEventListener("click", function () { pick(picked === key ? null : key); });
+    b.addEventListener("click", function () { pick(key === st.picked ? null : key); });
     b.addEventListener("mouseenter", function () { peek(key); });
     b.addEventListener("mouseleave", function () { peek(null); });
     b.addEventListener("focus", function () { peek(key); });
     b.addEventListener("blur", function () { peek(null); });
   });
 
-  var byKey = {};
-  geo.routes.forEach(function (r) { byKey[r.key] = r; });
-  var picked = null, hovered = null;
-
-  function draw() {
-    var key = hovered || picked;
-    veil.setAttribute("class", "veil" + (key ? " on" : ""));
-    geo.routes.forEach(function (r) {
-      cuts[r.key].setAttribute("display", r.key === key ? "inline" : "none");
-      if (hides[r.key]) hides[r.key].setAttribute("display", r.key === key ? "inline" : "none");
-      lines[r.key].setAttribute("class", "line" + (r.key === key ? " on" : ""));
-      if (buttons[r.key]) buttons[r.key].setAttribute("aria-pressed", r.key === picked);
-    });
-    Array.prototype.forEach.call(rows, function (tr) {
-      var own = tr.getAttribute("data-route");
-      tr.className = (key && own && own !== key) ? "dim" : "";
-    });
-    if (!caption) return;
-    if (!key) {
-      caption.textContent = "Pick a tour to follow it on its own — click it again to bring "
-                          + "the whole collection back.";
-      return;
-    }
-    var r = byKey[key], n = geo.highlights.filter(function (h) { return h.route === key; }).length;
-    caption.textContent = r.label + " — " + r.km.toFixed(1).replace(".", ",") + " km"
-                        + (n ? ", " + n + (n === 1 ? " highlight" : " highlights") : "");
-  }
-
-  function peek(key) { hovered = key && byKey[key] ? key : null; draw(); }
-  function pick(key) {
-    picked = key && byKey[key] ? key : null;
-    if (history.replaceState)
-      history.replaceState(null, "", picked ? "#tour-" + picked : location.pathname + location.search);
-    draw();
-  }
-
   addEventListener("keydown", function (e) { if (e.key === "Escape") pick(null); });
+
+  layout();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+  apply();
+
   var hash = (location.hash || "").replace(/^#tour-/, "");
   pick(byKey[hash] ? hash : null);
 })();
 """
+
 
 
 # ------------------------------------------------------------- app identity
@@ -574,7 +985,11 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
+  // ignoreSearch, because the client module is asked for with a version in the query while
+  // the precache holds it under its plain name — the query is there to keep a fresh page
+  // from meeting a stale module, not to name a different file.
+  e.respondWith(caches.match(e.request, {ignoreSearch: true})
+    .then((hit) => hit || fetch(e.request)));
 });
 """
 
@@ -614,14 +1029,11 @@ def nav_html(items, active, base):
     return '\n'.join(li)
 
 
-def page(path, title, body, nav, repo, built, base, script=''):
-    if script:
-        # "</" inside a script block would end it early — the JSON of the geometry is the
-        # only place where that can turn up.
-        script = '<script>%s</script>' % script.replace('</', '<\\/')
+def page(path, title, body, nav, repo, built, base, script='', styles='', credit=''):
+    """Write one page. `script` is raw markup — the caller decides what it needs."""
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write(PAGE.format(title=html.escape(title), css=CSS, nav=nav, body=body,
-                             script=script,
+                             script=script, styles=styles, credit=credit,
                              base=base, desc=html.escape(APP_DESC),
                              short=html.escape(APP_SHORT),
                              paper="#%02x%02x%02x" % PAPER,
@@ -640,8 +1052,74 @@ def card(name, subtitle, meta, img, href):
         sub=("<p>%s</p>\n    " % html.escape(subtitle)) if subtitle else "")
 
 
+FONT_DIR = 'fonts'
+FONT_FACES = {'label': ('map-label', 'italic'), 'place': ('map-place', 'normal')}
+
+
+def licence_beside(path):
+    """The licence file belonging to a font, or None — no licence, no handing on."""
+    folder = os.path.dirname(path)
+    family = os.path.splitext(os.path.basename(path))[0].split('-')[0]
+    for cand in ('%s-OFL.txt' % family, '%s-LICENSE.txt' % family, 'OFL.txt', 'LICENSE.txt'):
+        p = os.path.join(folder, cand)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def ship_fonts(site_dir):
+    """Copy the label fonts next to the site — but only those that may travel.
+
+    The vector labels are set in the same face the PNG was drawn with, which is only
+    possible if that file may be passed on. Lora and Poppins come with their Open Font
+    License, so they go; whatever a Windows or Linux machine happens to provide instead
+    does not, so it stays where it is and the CSS falls back to what the reader has. Both
+    halves therefore always agree: in CI both are Lora and Poppins, on a machine without
+    them both are the system serif and sans.
+    """
+    shipped = []
+    for kind in sorted(LABEL_FONTS):
+        path = font_file(LABEL_FONTS[kind][0])
+        lic = licence_beside(path) if path else None
+        if not path or not lic:
+            continue
+        os.makedirs(os.path.join(site_dir, FONT_DIR), exist_ok=True)
+        for src in (path, lic):
+            shutil.copyfile(src, os.path.join(site_dir, FONT_DIR, os.path.basename(src)))
+        shipped.append((kind, os.path.basename(path), os.path.basename(lic)))
+    return shipped
+
+
+def font_css(shipped, base):
+    """@font-face rules for the shipped fonts, relative to the page that uses them."""
+    return ''.join(
+        '@font-face{font-family:"%s";font-style:%s;font-display:swap;'
+        'src:url("%s%s/%s") format("truetype")}'
+        % (FONT_FACES[kind][0], FONT_FACES[kind][1], base, FONT_DIR, fname)
+        for kind, fname, _ in shipped)
+
+
+def font_credit(shipped, base):
+    """Where the fonts come from — the licence travels with them, so name it."""
+    if not shipped:
+        return ''
+    return (' Set in Lora and Poppins, under the <a href="%s%s/%s">SIL Open Font License</a>.'
+            % (base, FONT_DIR, shipped[0][2]))
+
+
+def write_map_js(site_dir):
+    """Write the client module and return a short hash of it.
+
+    Pages come from the network first but assets from the cache, so without the hash in
+    the URL a fresh page could meet a stale module for one visit.
+    """
+    with open(os.path.join(site_dir, MAP_JS_NAME), 'w', encoding='utf-8') as fh:
+        fh.write(MAP_JS)
+    return hashlib.sha256(MAP_JS.encode('utf-8')).hexdigest()[:8]
+
+
 def collect(gpx_root, out_dir):
-    """Collect configuration and cover image for every collection."""
+    """Collect configuration, cover image and background for every collection."""
     items = []
     for folder in discover(gpx_root):
         cfg = read_config(folder)
@@ -649,7 +1127,10 @@ def collect(gpx_root, out_dir):
         if not os.path.exists(png):
             print("skipped (no PNG): %s" % cfg['name'], file=sys.stderr)
             continue
-        items.append((slugify(os.path.basename(os.path.abspath(folder))), cfg, png))
+        # without the background the page falls back to the plain cover image
+        bg = os.path.join(out_dir, bg_name(cfg['output']))
+        items.append((slugify(os.path.basename(os.path.abspath(folder))), cfg, png,
+                      bg if os.path.exists(bg) else None))
     return items
 
 
@@ -667,18 +1148,23 @@ def build(gpx_root, out_dir, site_dir, repo, built):
                            ('apple-touch-icon.png', 180, False)):
         app_icon(os.path.join(site_dir, PWA_DIR, name), px, mask)
     manifest(site_dir)
+    shipped = ship_fonts(site_dir)
+    map_v = write_map_js(site_dir)
 
-    # write out cover images and icons
-    covers = {}
-    for slug, cfg, png in items:
+    # write out cover images, backgrounds and icons
+    covers, grounds = {}, {}
+    for slug, cfg, png, bg in items:
         covers[slug] = 'covers/' + os.path.basename(png)
         shutil.copyfile(png, os.path.join(site_dir, covers[slug]))
-    names = []
+        if bg:
+            grounds[slug] = 'covers/' + os.path.basename(bg)
+            shutil.copyfile(bg, os.path.join(site_dir, grounds[slug]))
+    names, boxes = [], {}
     for name, fn in icon_list():
-        stamp(fn, os.path.join(site_dir, 'icons', name + '.png'))
+        boxes[name] = stamp(fn, os.path.join(site_dir, 'icons', name + '.png'))
         names.append(name)
 
-    subs = [(cfg['name'], 'collections/%s.html' % slug) for slug, cfg, _ in items]
+    subs = [(cfg['name'], 'collections/%s.html' % slug) for slug, cfg, _, _ in items]
     nav_items = [('home', 'Home', 'index.html', []),
                  ('collections', 'Collections', 'collections/index.html', subs),
                  ('icons', 'Icons', 'icons/index.html', [])]
@@ -692,29 +1178,31 @@ def build(gpx_root, out_dir, site_dir, repo, built):
     # --------------------------------------------------------------- home
     cards = [card(cfg['name'], ' '.join(cfg['subtitle']), meta_of(cfg),
                   covers[slug], 'collections/%s.html' % slug)
-             for slug, cfg, _ in items]
+             for slug, cfg, _, _ in items]
     body = ("<h1>Maps for komoot collections</h1>\n"
             "<p class=\"lead\">Drawn from the GPX exports of the tours — tinted paper, "
             "dashed paths, stamped woodland. Every map is 1600×1200 pixels and is rebuilt "
             "on each push to <code>main</code>.</p>\n"
             "<div class=\"grid\">\n%s\n</div>" % '\n'.join(cards))
     page(os.path.join(site_dir, 'index.html'), "Maps for komoot collections", body,
-         nav_html(nav_items, 'home', ''), repo, built, '')
+         nav_html(nav_items, 'home', ''), repo, built, '',
+         styles=font_css(shipped, ''), credit=font_credit(shipped, ''))
 
     # ------------------------------------------------------- collections
     nav_c = nav_html(nav_items, 'collections', '../')
+    sub_styles, sub_credit = font_css(shipped, '../'), font_credit(shipped, '../')
     cards = [card(cfg['name'], ' '.join(cfg['subtitle']), meta_of(cfg),
                   '../' + covers[slug], '%s.html' % slug)
-             for slug, cfg, _ in items]
+             for slug, cfg, _, _ in items]
     body = ("<h1>Collections</h1>\n"
             "<p class=\"lead\">One folder below <code>gpx/</code> per collection — its own "
             "map frame, its own highlights, its own cover image.</p>\n"
             "<div class=\"grid\">\n%s\n</div>" % '\n'.join(cards))
     page(os.path.join(site_dir, 'collections', 'index.html'), "Collections", body,
-         nav_c, repo, built, '../')
+         nav_c, repo, built, '../', styles=sub_styles, credit=sub_credit)
 
-    for slug, cfg, png in items:
-        geo = geometry(cfg)
+    for slug, cfg, png, bg in items:
+        geo = geometry(cfg, '../' + grounds[slug] if slug in grounds else None)
         rows = []
         for h in cfg['highlights'] + cfg['endpoints']:
             icon = h.get('icon')
@@ -738,31 +1226,46 @@ def build(gpx_root, out_dir, site_dir, repo, built):
 
         lead = ('<p class="lead">%s</p>\n' % html.escape(' '.join(cfg['subtitle']))
                 if cfg['subtitle'] else '')
-        body = ('<h1>%s</h1>\n%s'
-                '<figure class="map"><img src="../%s" alt="Cover image of the collection %s">'
-                '</figure>\n<p class="caption">%s</p>\n'
+        # With the background the map is built as vectors and the full cover image is only
+        # the fallback; without it the page is what it always was, an image and a link.
+        alt = 'Cover image of the collection %s' % html.escape(cfg['name'])
+        cover_img = '<img src="../%s" alt="%s">' % (covers[slug], alt)
+        if geo['bg']:
+            figure = '<figure class="mapfig"><noscript>%s</noscript></figure>' % cover_img
+            script = (data_island(geo)
+                      + '<script src="../%s?v=%s" defer></script>' % (MAP_JS_NAME, map_v))
+        else:
+            figure = '<figure class="mapfig">%s</figure>' % cover_img
+            script = ''
+        body = ('<h1>%s</h1>\n%s%s\n<p class="caption" aria-live="polite">%s</p>\n'
                 '<p class="actions"><a href="../%s" download>Download cover image (PNG)</a>'
                 '<span class="meta">%s</span></p>\n%s%s'
-                % (html.escape(cfg['name']), lead, covers[slug], html.escape(cfg['name']),
+                % (html.escape(cfg['name']), lead, figure,
                    "Pick a tour to follow it on its own — click it again to bring the whole "
                    "collection back.",
                    covers[slug], html.escape(meta_of(cfg)), tours, table))
         page(os.path.join(site_dir, 'collections', slug + '.html'), cfg['name'], body,
-             nav_c, repo, built, '../',
-             script=MAP_JS % {'geo': json.dumps(geo, ensure_ascii=False, separators=(',', ':')),
-                              'paper': "#%02x%02x%02x" % PAPER,
-                              'accent': "#%02x%02x%02x" % ACCENT})
+             nav_c, repo, built, '../', script=script,
+             styles=sub_styles, credit=sub_credit)
 
     # ------------------------------------------------------------- icons
-    tiles = ['  <figure class="icon"><img src="%s.png" alt="Icon %s" loading="lazy">'
-             '<figcaption><code>%s</code></figcaption></figure>' % (n, n, n) for n in names]
+    fns = dict(icon_list())
+    tiles = ['  <figure class="icon"><div class="pair">'
+             '<span><img src="%s.png" alt="Icon %s" loading="lazy"><em>PIL</em></span>'
+             '<span>%s<em>SVG</em></span></div>'
+             '<figcaption><code>%s</code></figcaption></figure>'
+             % (n, n, icon_svg(n, fns[n], boxes[n]), n) for n in names]
     body = ("<h1>Icons</h1>\n"
             "<p class=\"lead\">The icons from <code>icons.py</code>, each drawn with PIL "
             "primitives. The function name is also the value of <code>\"icon\"</code> in the "
-            "<code>collection.json</code>.</p>\n"
+            "<code>collection.json</code>. Every icon is shown twice: stamped as a pixel image "
+            "for the cover map, and recorded as SVG for the interactive map. Both come from the "
+            "same function — where the two differ, the recorder in <code>svgdraw.py</code> is "
+            "wrong.</p>\n"
             "<div class=\"icons\">\n%s\n</div>" % '\n'.join(tiles))
     page(os.path.join(site_dir, 'icons', 'index.html'), "Icons", body,
-         nav_html(nav_items, 'icons', '../'), repo, built, '../')
+         nav_html(nav_items, 'icons', '../'), repo, built, '../',
+         styles=sub_styles, credit=sub_credit)
 
     # last, because the service worker precaches everything that exists at this point
     cached = service_worker(site_dir)
