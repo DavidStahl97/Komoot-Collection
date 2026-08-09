@@ -35,7 +35,9 @@ because every collection has a different map frame.
 
 The same goes for the site: `python3 build_site.py` runs after `map_cover.py` and writes
 `site/`. A change is checked only once `site/index.html` has been looked at in a browser —
-home, a collection subpage and the icon list. The workflow `.github/workflows/maps.yml`
+home, a collection subpage and the icon list. On the subpage that also means picking a
+tour: the overlay lies on top of the image without any alignment of its own, so a shifted
+frame or a moved label shows up as lines next to the drawn ones or as half-veiled text. The workflow `.github/workflows/maps.yml`
 does both in CI: in a pull request as the artifact `collection-icons`, on `main` as a
 GitHub Page.
 
@@ -78,9 +80,13 @@ Load-bearing concepts:
   1600×1200 via LANCZOS. That is why *every* new pixel size has to be multiplied by `*S` —
   otherwise the element gets the wrong size when `S` changes. Values from the JSON
   (`offset`, `size`) are unscaled and get their `*S` at drawing time.
-- **Projection.** `merc`/`P`/`PA` implement Web Mercator. They live inside `render` because
-  scale and center come from the bounding box of *this* collection's routes, framed by
-  `BOX`. A new tour therefore shifts the layout of its own collection and nothing else.
+- **Projection.** `projection(routes, box)` implements Web Mercator and returns `P` (one
+  coordinate) and `PA` (a whole track). Scale and centre come from the bounding box of
+  *this* collection's routes, framed by `box`. A new tour therefore shifts the layout of
+  its own collection and nothing else. It sits outside `render` because `build_site.py`
+  needs the same positions for the interactive overlay; called with `BOX` it yields
+  supersampled pixels, called with `BOX/S` the pixels of the finished 1600×1200 image.
+  Overlay positions are never estimated from the image — they come from here.
 - **GPX access via kilometre marks.** `cum` returns the cumulative haversine distance;
   `at(route, km)` (point at km) and `seg(route, k0, k1)` (section) build on it. Coordinates
   always come via `km`, never estimated — the exception are endpoints such as Haiger and
@@ -98,6 +104,18 @@ list of the icon page does not come from an enumeration but from the signature �
 function in `icons.py` whose first four parameters are named `d, x, y, s` is an icon, which
 is what drops `poly` and `circ`. Icons are stamped large and then cropped to what was
 actually drawn, because they reach past their radius by different amounts.
+
+The interactive layer of a collection page is generated the same way: `geometry(cfg)`
+projects routes, highlights and endpoints into the coordinates of the finished image and
+`MAP_JS` builds an SVG over the PNG from that JSON. Dimming is one veil rectangle with a
+mask — the picked route, its highlights and the endpoints are holes in it, so what stays
+visible is the drawn map, never a redrawn copy. Two things follow. The label holes come
+from `label_box`, which mirrors the label drawing in `render` (offset, `side`, plate
+padding) and measures the text with the same fonts via `measure()` — if the labels move
+in `render`, they have to move here as well, otherwise the veil clips them. And the holes
+are blurred (`stdDeviation` in `MAP_JS`), so every box keeps a margin wider than that
+blur; that is the whole reason for the generous padding. The image itself stays untouched
+and downloadable — it is what komoot shows as the cover.
 
 The progressive web app also comes out of `build_site.py` and follows from the same rule:
 nothing is maintained by hand. `manifest()` derives its colors from `PAPER`, `app_icon()`
