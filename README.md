@@ -27,7 +27,8 @@ python3 map_cover.py --out /path/to/cover
 Run it from the repository root — the paths are relative and can be moved with
 `--gpx` and `--out`. If the Google fonts Lora and Poppins are missing under
 `/usr/share/fonts/truetype/google-fonts/`, the script falls back to DejaVu and
-Liberation: the layout stays, the typeface looks different.
+Liberation, on Windows to Georgia and Calibri: the layout stays, the typeface looks
+different.
 
 Every run produces exactly the same image — all random numbers have fixed seeds.
 
@@ -179,7 +180,14 @@ collections via `discover()` and the icons via the signature `fn(d, x, y, s)`.
 On the subpage of a collection the cover image is not just a picture. Picking a
 tour — by clicking its line on the map or its entry under *Tours* — leaves that one
 tour alone in focus: everything else is covered with a sheet of paper, while the
-picked route, its highlights and both endpoints stay clear. Clicking again, a click
+picked route, its highlights and both endpoints stay clear. What stays clear is the tour,
+not its surroundings: the strip along the line is narrow, and highlights of the other
+tours go under the paper with icon and label even where they sit right next to the picked
+route — and the picked route runs through unbroken, past every foreign highlight lying on
+it. Nothing extra is drawn around the highlights that remain — being the only ones left
+visible, in front of a sheet that covers everything else, is what marks them, and the line
+drawn along the route stops short of them instead of running through icon and label.
+Clicking again, a click
 next to it or `Esc` brings the whole collection back; hovering only shows a preview.
 The rows under *Highlights and endpoints* fade along with it, and the picked tour
 ends up in the address as `#tour-KN`, so a single tour can be linked to.

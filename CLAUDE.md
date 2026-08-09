@@ -48,9 +48,12 @@ service worker is *activated* under *Application*, and the three page types stil
 with *Network → Offline* switched on.
 
 The target directory and the fonts are no longer hard-wired: `out/` is created when
-missing, and `F(...)` falls back to DejaVu or Liberation when the Google fonts are absent.
-A run on someone else's machine therefore says nothing about the final typography — font
-metrics differ, lines can break or overlap differently.
+missing, and `F(...)` falls back to DejaVu or Liberation when the Google fonts are absent,
+on Windows to Georgia and Calibri. A run on someone else's machine therefore says nothing
+about the final typography — font metrics differ, lines can break or overlap differently.
+What it does have to say something about is the *size*: if a map comes out with tiny
+labels in plates that have shrunk with them, then no font was found at all and
+`load_default` is drawing. Then the layout is not being checked, only a caricature of it.
 
 ## Architecture
 
@@ -109,13 +112,38 @@ The interactive layer of a collection page is generated the same way: `geometry(
 projects routes, highlights and endpoints into the coordinates of the finished image and
 `MAP_JS` builds an SVG over the PNG from that JSON. Dimming is one veil rectangle with a
 mask — the picked route, its highlights and the endpoints are holes in it, so what stays
-visible is the drawn map, never a redrawn copy. Two things follow. The label holes come
-from `label_box`, which mirrors the label drawing in `render` (offset, `side`, plate
-padding) and measures the text with the same fonts via `measure()` — if the labels move
-in `render`, they have to move here as well, otherwise the veil clips them. And the holes
-are blurred (`stdDeviation` in `MAP_JS`), so every box keeps a margin wider than that
-blur; that is the whole reason for the generous padding. The image itself stays untouched
-and downloadable — it is what komoot shows as the cover.
+visible is the drawn map, never a redrawn copy. The order inside the mask carries meaning:
+first the corridor of each route is cut open, then the highlights of the *other* tours are
+painted back white (`marks` with a padding), and only then the endpoints. Without that
+second pass a highlight of another tour would ride along in the focus wherever its label
+reaches into the corridor. What is meant is the one tour, not its surroundings, and the
+two numbers that decide that are the corridor width (40, wide enough for the drawn line,
+not for its neighbourhood) and the padding of the holes.
+
+The padding of the covers is *negative*: they hug icon and plate instead of taking the air
+around them, and they use their own, crisper blur (`map-edge`). Both follow from the same
+constraint — „Der Knoten" sits on the Ulmtalradweg and „Ulmtalradweg" lies across Über
+Greifenstein. A generous cover would cut the picked tour in two there, and the picked tour
+has to stay unbroken over its whole length. What is lost is nothing: under icon and plate
+the route is invisible anyway, because `render` draws them over it. Anything drawn beyond
+the mark — the masts of the wind turbines, for instance — stays faintly visible where the
+picked route passes; that is the price of the unbroken line. Four things follow.
+
+The label holes come from `label_box`, which mirrors the label drawing in `render`
+(offset, `side`, plate padding) and measures the text with the same fonts via `measure()`
+— if the labels move in `render`, they have to move here as well, otherwise the veil clips
+them. The holes are blurred (`stdDeviation` in `MAP_JS`), so every box keeps a margin
+wider than that blur, but only a little wider: with too much, „Lahn bei Löhnberg" pulls
+the border of the cartouche out of the veil. The covers over foreign highlights need more,
+because they have to reach past the soft edge of the hole underneath them.
+
+The line drawn on top is masked with `map-over`, which punches out every highlight and
+every endpoint — on the drawn map the highlights lie above the routes, and the overlay has
+to keep to that order instead of running through icon and label. And the highlights of the
+picked tour get no ring or marker of their own: what marks them is that they are the only
+ones left uncovered, which is why the veil is deep (`.veil.on`) — the emphasis comes from
+the contrast, not from anything drawn on top. The image itself stays untouched and
+downloadable — it is what komoot shows as the cover.
 
 The progressive web app also comes out of `build_site.py` and follows from the same rule:
 nothing is maintained by hand. `manifest()` derives its colors from `PAPER`, `app_icon()`

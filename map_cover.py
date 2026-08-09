@@ -26,10 +26,20 @@ BOX = (300 * S, 70 * S, 1300 * S, 1130 * S)     # map frame on the sheet
 
 FONT_DIRS = ["/usr/share/fonts/truetype/google-fonts",
              "/usr/share/fonts/truetype/dejavu",
-             "/usr/share/fonts/truetype/liberation"]
-FONT_FALLBACK = {"Lora-Italic-Variable": ["DejaVuSerif-Italic", "LiberationSerif-Italic"],
-                 "Poppins-Medium": ["DejaVuSans", "LiberationSans-Regular"],
-                 "Poppins-Bold": ["DejaVuSans-Bold", "LiberationSans-Bold"]}
+             "/usr/share/fonts/truetype/liberation",
+             os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"),
+             os.path.join(os.environ.get("LOCALAPPDATA", ""),      # per-user install
+                          "Microsoft", "Windows", "Fonts")]
+# Order matters: the Google fonts first, then whatever the system happens to bring —
+# on Linux DejaVu or Liberation, on Windows Georgia and Calibri. Only when nothing at
+# all is found does load_default step in, and it has to be given the size, otherwise
+# every label shrinks to the bitmap font and the whole layout is off.
+FONT_FALLBACK = {"Lora-Italic-Variable": ["DejaVuSerif-Italic", "LiberationSerif-Italic",
+                                          "georgiai", "constani"],
+                 "Poppins-Medium": ["DejaVuSans", "LiberationSans-Regular",
+                                    "calibri", "arial"],
+                 "Poppins-Bold": ["DejaVuSans-Bold", "LiberationSans-Bold",
+                                  "calibrib", "arialbd"]}
 
 
 def F(name, size):
@@ -37,9 +47,9 @@ def F(name, size):
     for cand in [name] + FONT_FALLBACK.get(name, []):
         for dirn in FONT_DIRS:
             p = os.path.join(dirn, cand + ".ttf")
-            if os.path.exists(p):
+            if dirn and os.path.exists(p):
                 return ImageFont.truetype(p, int(size * S))
-    return ImageFont.load_default()
+    return ImageFont.load_default(int(size * S))
 
 
 # --------------------------------------------------------------- GPX helpers

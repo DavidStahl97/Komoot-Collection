@@ -80,10 +80,9 @@ CSS = """
   .map .line { fill: none; opacity: 0; transition: opacity .25s ease; pointer-events: none; }
   .map .line.on { opacity: 1; }
   .map .veil { opacity: 0; transition: opacity .35s ease; pointer-events: none; }
-  .map .veil.on { opacity: .74; }
-  .map .ring { fill: none; stroke: #b0603a; stroke-width: 3; opacity: 0;
-               transition: opacity .25s ease; pointer-events: none; }
-  .map .ring.on { opacity: .9; }
+  /* the deeper the veil, the more the picked tour and its highlights stand out —
+     that is the emphasis; nothing is drawn on top of the map for it */
+  .map .veil.on { opacity: .84; }
   .caption { margin: 0 0 26px; font-size: .9rem; color: #7e7058; font-style: italic;
              min-height: 1.4em; }
   .tours { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 10px;
@@ -101,7 +100,7 @@ CSS = """
   .actions { margin: 0 0 30px; font-size: .9rem; }
   .actions a { margin-right: 18px; }
   @media (prefers-reduced-motion: reduce) {
-    .map .veil, .map .line, .map .ring { transition: none; }
+    .map .veil, .map .line { transition: none; }
   }
 """
 
@@ -223,7 +222,9 @@ def label_box(x, y, tw, offset, side, height):
     """Where a label sits on the map — mirrors the label drawing in map_cover.render.
 
     The margin around the drawn plate is wider than the blur of the hole (see MAP_JS),
-    otherwise the soft edge would reach into the text and veil it half way.
+    otherwise the soft edge would reach into the text and veil it half way. Not much
+    wider, though: „Lahn bei Löhnberg" ends a few pixels from the cartouche, and every
+    pixel of margin too many pulls its border out of the veil along with it.
     """
     ox, oy = offset
     tx = x + ox
@@ -231,7 +232,7 @@ def label_box(x, y, tw, offset, side, height):
         tx -= tw / 2
     elif side != 'r':
         tx -= tw
-    return [round(tx - 30, 1), round(y + oy - 26, 1), round(tw + 60, 1), round(height + 52, 1)]
+    return [round(tx - 18, 1), round(y + oy - 16, 1), round(tw + 36, 1), round(height + 32, 1)]
 
 
 def geometry(cfg):
@@ -306,39 +307,93 @@ MAP_JS = """
                            width: "140%%", height: "140%%"});
   blur.appendChild(el("feGaussianBlur", {stdDeviation: 9}));
   defs.appendChild(blur);
+  // The covers hug icon and plate closely, so their edge has to be crisper than the one
+  // of the holes — with the wide blur a foreign label would only be half covered.
+  var tight = el("filter", {id: "map-edge", x: "-20%%", y: "-20%%",
+                            width: "140%%", height: "140%%"});
+  tight.appendChild(el("feGaussianBlur", {stdDeviation: 4}));
+  defs.appendChild(tight);
 
   var mask = el("mask", {id: "map-spot", maskUnits: "userSpaceOnUse",
                          x: 0, y: 0, width: VW, height: VH});
   mask.appendChild(el("rect", {x: 0, y: 0, width: VW, height: VH, fill: "#fff"}));
 
-  function hole(parent, shapes) {
-    var g = el("g", {fill: "#000", stroke: "#000", filter: "url(#map-soft)"});
+  function patch(parent, shapes, tone, edge) {
+    var g = el("g", {fill: tone, stroke: tone, filter: "url(#" + edge + ")"});
     shapes.forEach(function (s) { g.appendChild(s); });
     parent.appendChild(g);
     return g;
   }
+  function hole(parent, shapes) { return patch(parent, shapes, "#000", "map-soft"); }
+  function cover(parent, shapes) { return patch(parent, shapes, "#fff", "map-edge"); }
 
-  var always = [];                       // start and finish belong to every tour
-  geo.endpoints.forEach(function (e) {
-    always.push(el("circle", {cx: e.x, cy: e.y, r: e.r * 1.7}));
-    always.push(el("rect", {x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3], rx: 16}));
-  });
-  if (always.length) hole(mask, always);
+  // A highlight of another tour must not ride along just because it happens to lie in the
+  // corridor of the picked route — the corridor is wide, its labels reach further still.
+  // So the cut-out corridor is painted over again where a foreign highlight sits, with a
+  // margin wider than the blur so no letter survives at the edge.
+  function marks(h, pad) {
+    return [el("circle", {cx: h.x, cy: h.y, r: h.r * 1.7 + pad}),
+            el("rect", {x: h.box[0] - pad, y: h.box[1] - pad, rx: 16,
+                        width: h.box[2] + 2 * pad, height: h.box[3] + 2 * pad})];
+  }
 
-  var cuts = {}, lines = {}, rings = {};
+  // Narrow on purpose: the corridor is meant to free the drawn line, not its
+  // neighbourhood. Every pixel wider takes a parallel route or a foreign tree with it.
+  function corridor(r) {
+    return el("path", {d: path(r.points), fill: "none", "stroke-width": 40,
+                       "stroke-linejoin": "round", "stroke-linecap": "round"});
+  }
+
+  var cuts = {}, hides = {}, lines = {};
   geo.routes.forEach(function (r) {
-    var shapes = [el("path", {d: path(r.points), fill: "none", "stroke-width": 78,
-                              "stroke-linejoin": "round", "stroke-linecap": "round"})];
+    // No extra air around the highlights: `label_box` is generous enough, and every pixel
+    // more reaches into the cartouche or into a neighbouring label.
+    var shapes = [corridor(r)];
     geo.highlights.forEach(function (h) {
-      if (h.route !== r.key) return;
-      shapes.push(el("circle", {cx: h.x, cy: h.y, r: h.r * 1.7}));
-      shapes.push(el("rect", {x: h.box[0], y: h.box[1], width: h.box[2], height: h.box[3], rx: 16}));
+      if (h.route === r.key) shapes.push.apply(shapes, marks(h, 0));
     });
     var g = hole(mask, shapes);
     g.setAttribute("display", "none");
     cuts[r.key] = g;
   });
+  geo.routes.forEach(function (r) {
+    // The cover hugs what is actually drawn (negative padding), it does not take the air
+    // around it: „Der Knoten" sits on the Ulmtalradweg, and a wide cover would break that
+    // route in two. Under icon and plate the route is invisible anyway — the renderer
+    // draws them over it — so the picked tour stays unbroken in everything one can see.
+    var shapes = [];
+    geo.highlights.forEach(function (h) {
+      if (h.route !== r.key) shapes.push.apply(shapes, marks(h, -16));
+    });
+    if (!shapes.length) return;
+    var g = cover(mask, shapes);           // after the cuts, so it wins over them
+    g.setAttribute("display", "none");
+    hides[r.key] = g;
+  });
+
+  var always = [];                         // start and finish belong to every tour
+  geo.endpoints.forEach(function (e) {
+    always.push(el("circle", {cx: e.x, cy: e.y, r: e.r * 1.7}));
+    always.push(el("rect", {x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3], rx: 16}));
+  });
+  if (always.length) hole(mask, always);   // last, so no cover reaches into them
   defs.appendChild(mask);
+
+  // On the drawn map the highlights lie above the routes — the line drawn on top has to
+  // keep to that, otherwise it runs straight through icon and label. So it is masked out
+  // wherever a highlight or an endpoint sits.
+  var over = el("mask", {id: "map-over", maskUnits: "userSpaceOnUse",
+                         x: 0, y: 0, width: VW, height: VH});
+  over.appendChild(el("rect", {x: 0, y: 0, width: VW, height: VH, fill: "#fff"}));
+  var above = [];
+  geo.highlights.forEach(function (h) { above.push.apply(above, marks(h, 0)); });
+  geo.endpoints.forEach(function (e) {
+    above.push(el("circle", {cx: e.x, cy: e.y, r: e.r * 1.7}));
+    above.push(el("rect", {x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3], rx: 16}));
+  });
+  if (above.length) hole(over, above);
+  defs.appendChild(over);
+
   svg.appendChild(defs);
 
   svg.appendChild(el("rect", {"class": "veil", x: 0, y: 0, width: VW, height: VH,
@@ -346,18 +401,13 @@ MAP_JS = """
 
   // the picked tour once more on top, in the dashed style of the map
   geo.routes.forEach(function (r) {
-    var d = path(r.points), g = el("g", {"class": "line"});
+    var d = path(r.points), g = el("g", {"class": "line", mask: "url(#map-over)"});
     g.appendChild(el("path", {d: d, fill: "none", stroke: "%(paper)s", "stroke-width": 8,
                               "stroke-linejoin": "round", "stroke-linecap": "round"}));
     g.appendChild(el("path", {d: d, fill: "none", stroke: "%(accent)s", "stroke-width": 4,
                               "stroke-dasharray": "14 10", "stroke-linejoin": "round"}));
     svg.appendChild(g);
     lines[r.key] = g;
-  });
-  geo.highlights.forEach(function (h, i) {
-    var c = el("circle", {"class": "ring", cx: h.x, cy: h.y, r: h.r * 1.25});
-    svg.appendChild(c);
-    (rings[h.route] = rings[h.route] || []).push(c);
   });
 
   // hit areas last, so they lie above everything and stay clickable
@@ -392,10 +442,8 @@ MAP_JS = """
     veil.setAttribute("class", "veil" + (key ? " on" : ""));
     geo.routes.forEach(function (r) {
       cuts[r.key].setAttribute("display", r.key === key ? "inline" : "none");
+      if (hides[r.key]) hides[r.key].setAttribute("display", r.key === key ? "inline" : "none");
       lines[r.key].setAttribute("class", "line" + (r.key === key ? " on" : ""));
-      (rings[r.key] || []).forEach(function (c) {
-        c.setAttribute("class", "ring" + (r.key === key ? " on" : ""));
-      });
       if (buttons[r.key]) buttons[r.key].setAttribute("aria-pressed", r.key === picked);
     });
     Array.prototype.forEach.call(rows, function (tr) {
