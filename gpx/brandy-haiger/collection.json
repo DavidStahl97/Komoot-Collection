@@ -1,0 +1,36 @@
+{
+  "name": "Brandy <-> Haiger",
+  "output": "brandy-haiger-karte.png",
+  "title": ["BRANDY", "HAIGER"],
+  "arrow": true,
+  "subtitle": ["Wege durch das", "Lahn-Dill-Bergland"],
+
+  "routes": [
+    {"key": "FU", "file": "_____Fuchskaute___Ulmtalradweg.gpx"},
+    {"key": "KN", "file": "______ber_den_Knoten.gpx"},
+    {"key": "DI", "file": "_____Dilltalradweg.gpx"},
+    {"key": "GR", "file": "______ber_Greifenstein.gpx"}
+  ],
+
+  "rivers": [
+    {"route": "KN", "from": 28.5, "to": 36.5, "width": 7, "note": "Lahn Weilburg-Loehnberg"},
+    {"route": "DI", "from": 44.0, "to": 56.0, "width": 6, "note": "Dill Richtung Dillenburg"},
+    {"route": "FU", "from": 20.5, "to": 23.5, "width": 5, "note": "Krombachtalsperre-Zulauf"}
+  ],
+
+  "highlights": [
+    {"label": "Fuchskaute",        "route": "FU", "km": 17.0, "icon": "fox",       "side": "l", "offset": [-6, -56]},
+    {"label": "Krombachtalsperre", "route": "FU", "km": 22.4, "icon": "lake",      "side": "l", "offset": [-30, 10]},
+    {"label": "Ulmtalradweg",      "route": "FU", "km": 34.4, "icon": "fastpath",  "side": "r", "offset": [18, 34]},
+    {"label": "Der Knoten",        "route": "KN", "km": 52.1, "icon": "windmount", "side": "r", "offset": [12, 46]},
+    {"label": "Grube Fortuna",     "route": "DI", "km": 23.1, "icon": "mine",      "side": "r", "offset": [14, 44]},
+    {"label": "Dilltal",           "route": "DI", "km": 47.0, "icon": "dillherb",  "side": "r", "offset": [14, 42]},
+    {"label": "Lahn bei Löhnberg", "route": "KN", "km": 32.5, "icon": "river",     "side": "l", "offset": [-14, 46]},
+    {"label": "Weiltalradweg",     "route": "KN", "km": 19.2, "icon": "idyllic",   "side": "l", "offset": [-26, 6]}
+  ],
+
+  "endpoints": [
+    {"label": "HAIGER",         "lat": 50.7402, "lon": 8.2223, "icon": "shark"},
+    {"label": "BRANDOBERNDORF", "lat": 50.4332, "lon": 8.4970, "icon": "home"}
+  ]
+}
