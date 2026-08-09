@@ -9,5 +9,9 @@ __pycache__/
 # generated maps
 out/
 
-# generated site
-site/
+# what export_data.py writes into the app, and what the app builds from it
+web/static/
+web/src/generated/
+web/build/
+web/.svelte-kit/
+web/node_modules/

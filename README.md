@@ -39,18 +39,43 @@ site draws those as vectors on top of it, so the background is what stays painte
 
 Every run produces exactly the same image — all random numbers have fixed seeds.
 
+For the site there is a second half, and it needs Node:
+
+```bash
+python3 export_data.py --png out --out web/static
+npm ci --prefix web
+npm run dev --prefix web        # http://localhost:5173
+```
+
+`export_data.py` has to run first — the app is built from what it writes, and the build
+stops with a readable error if it has not. `npm run build --prefix web` writes the finished
+site to `web/build`, `npm run preview --prefix web` serves that.
+
 ## What lives where
+
+Python draws and measures; it does not build the web app. Everything it produces is data
+and images, and the app under `web/` is an ordinary single-page app that reads them.
 
 | File | Purpose |
 |---|---|
 | `map_cover.py` | Finds the collections and builds each map, in layers from top to bottom — twice: the cover image and, without routes and highlights, the background of the interactive map. |
 | `icons.py` | The drawn icons: fox, lake, wind-turbine hill, cycle path, river, idyllic path, dill, mine, shark, house in the woods. |
-| `svgdraw.py` | Records what `icons.py` draws as SVG instead of pixels, so the site gets the same icons as vectors without a second set of them. |
-| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons — including the vector map (`site/map.js`), manifest, service worker and app icon of the progressive web app. |
+| `svgdraw.py` | Records what `icons.py` draws as SVG instead of pixels, so the app gets the same icons as vectors without a second set of them. |
+| `export_data.py` | Exports what the app is built from: the geometry of every collection as JSON, the icons as SVG, the cover images, the app icon and the fonts. No markup, no stylesheet, no script. |
+| `web/` | The web app: SvelteKit, Svelte 5 and TypeScript. Hand-written; everything generated lands in `web/static/` and is not checked in. |
 | `gpx/<collection>/` | One folder per collection: the GPX exports and optionally a `collection.json`. Nothing runs without them. |
 | `out/` | The rendered PNGs: `<collection>.png` is the cover, `<collection>-bg.png` its background. Not checked in. |
-| `site/` | The generated site. Not checked in. |
+| `web/build/` | The finished site, what GitHub Pages publishes. Not checked in. |
 | `.github/workflows/maps.yml` | Renders on every push and pull request, attaches the images to the PR and publishes the site. |
+
+Inside `web/src`:
+
+| File | Purpose |
+|---|---|
+| `routes/` | The four pages: home, collections, one collection, icons. Each fetches its own JSON. |
+| `lib/types.ts` | The data contract with `export_data.py`. A field renamed on one side and not the other is the one mistake nothing else would catch. |
+| `lib/map/` | The interactive map: `Map.svelte` and `Profile.svelte` over `view` (zoom and pan), `tour` (what is picked), `hit` (which line a click means), `profile` and `geom`. |
+| `app.css`, `generated/tokens.css` | The stylesheet, and the four map colors written out of `map_cover.py`. |
 
 ## Adding a new collection
 
@@ -176,12 +201,18 @@ function name — that is, with the value that belongs in `collection.json` as
 `"icon"`. Locally:
 
 ```bash
-python3 map_cover.py --out out
-python3 build_site.py --png out --out site
+python3 map_cover.py --out out && python3 export_data.py --png out --out web/static && npm run build --prefix web
 ```
 
-New icons and new collections show up on their own: `build_site.py` collects the
-collections via `discover()` and the icons via the signature `fn(d, x, y, s)`.
+New icons and new collections show up on their own: `export_data.py` collects the
+collections via `discover()` and the icons via the signature `fn(d, x, y, s)`, and the app
+renders whatever is in `data/index.json`. Adding a collection therefore never touches the
+app.
+
+Because the pages are routed in the browser, a deep link such as
+`/collections/brandy-haiger/` is not a file. GitHub Pages answers it with `404.html`, which
+is the same app shell, and the router takes it from there — the page is correct, the status
+code is not. That is the standard arrangement for a single-page app on Pages.
 
 ### The map as a vector map
 
@@ -207,10 +238,12 @@ are reachable and the nearer one wins.
 
 The positions come from the same projection as the renderer (`projection()` in
 `map_cover.py`, with the map frame scaled down by the supersampling), which is why the
-lines land exactly in the tree-free corridors the background was stamped around them. The
-icons come from `icons.py` through `svgdraw.py`, which records the drawing calls as SVG
-instead of pixels — there is no second, hand-written set of icons that could drift. The
-label plates are measured in the browser from the text itself.
+lines land exactly in the tree-free corridors the background was stamped around them. They
+arrive as `data/<collection>.json`, written by `export_data.py` and fetched by the page.
+The icons come from `icons.py` through `svgdraw.py`, which records the drawing calls as SVG
+instead of pixels — there is no second, hand-written set of icons that could drift. They
+travel as `icons/sprite.svg`, one `<g>` per icon and size, which the page inlines once and
+then points `<use>` at. The label plates are measured in the browser from the text itself.
 
 **Zoom and pan.** Ctrl/⌘ and the wheel, pinch, double click or the buttons zoom in up to
 four times; drag to move, arrow keys with the map focused, `0` back to the whole sheet. The
@@ -223,38 +256,43 @@ values of the GPX. Running along it marks the spot on the map, running along the
 marks the spot in the profile.
 
 The cover image stays untouched — *Download cover image (PNG)* gives out exactly the file
-from `out/`, with all tours on it, which is what komoot gets. Without JavaScript the page is
-what it always was: that image and a download link.
+from `out/`, with all tours on it, which is what komoot gets.
+
+**Without JavaScript there is no page.** This is what the move to a single-page app gave
+up: the collection subpages used to be static HTML and still showed the cover image and a
+download link with scripting off. Now they are routed in the browser, so a reader without
+JavaScript gets the `<noscript>` notice and a link to `data/index.json`, which names the
+file of every cover below `covers/`. The images themselves are still ordinary PNGs and
+still open on their own.
 
 ### The site as a progressive web app
 
-The page is installable and works offline. `build_site.py` writes, next to the
-pages, everything needed for that:
+The page is installable and works offline. The service worker and the manifest are
+generated by `vite-plugin-pwa` from the finished build, so the precache list is whatever
+was actually written — nothing has to be kept in step by hand:
 
 | File | Purpose |
 |---|---|
-| `manifest.webmanifest` | Name, colors, icons. All paths relative, because the page lives under `/<repository>/`. |
-| `sw.js` | Service worker: precaches every generated file, serves it when offline. |
-| `map.js` | The vector map. Asked for with a hash in the query, so a fresh page never meets a stale module. |
+| `manifest.webmanifest` | Name, colors, icons. All paths relative, because the page lives under `/<repository>/`. The colors are `PAPER` from `map_cover.py`, read out of `src/generated/theme.json`. |
+| `sw.js` | Service worker: precaches every file of the build, serves it when offline. |
 | `pwa/icon-*.png` | App icon — a compass rose on paper, drawn with the same PIL primitives as the maps. |
 | `fonts/` | Lora and Poppins, if they were found *and* their licence sits next to them — so the labels on the site are set in the same face the PNG was drawn with. Otherwise the CSS falls back, exactly as the renderer does. |
 
 Installing works from the browser menu ("Install app" / "Add to Home Screen") once
 the page is served over HTTPS — GitHub Pages does that. On the first visit the
-service worker caches all pages, cover images and icons; after that every subpage
-opens without a network.
+service worker caches every page, cover image, icon and data file; after that every subpage
+opens without a network, including a deep link to a collection.
 
-Pages are fetched from the network first and only come from the cache when that
-fails, so a new deployment is visible on the next visit. Images and the manifest
-come from the cache, because the cache name carries a hash over all files: a build
-with unchanged content keeps the cache, any change replaces it as a whole and the
-old one is deleted on activation.
+The old hand-rolled cache is gone with it: the bundler gives every asset a hash in its
+name, so a changed file is a different URL and there is nothing to invalidate. Navigations
+are answered from the precached shell, which is why a collection opens offline even though
+its URL was never a file.
 
-Testing this locally needs a server — `file://` has no service worker:
+Testing this locally needs a server — `file://` has no service worker, and `python3 -m
+http.server` alone will not do because it cannot answer a deep link with `404.html`:
 
 ```bash
-python3 map_cover.py --out out && python3 build_site.py --png out --out site
-python3 -m http.server -d site 8000    # then http://127.0.0.1:8000/
+npm run preview --prefix web    # then http://localhost:4173/
 ```
 
 `localhost` counts as a secure origin, so registration works there too. In the
