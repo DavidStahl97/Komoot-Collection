@@ -4,92 +4,105 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 @README.md
 
-Die README erklärt Zweck, Setup und den Umgang mit Collections, Touren, Highlights und
-Stellschrauben — sie wird über den Import oben mitgeladen und hier nicht wiederholt.
-Was folgt, ist nur, was beim Arbeiten im Code stolpern lässt.
+The README explains purpose, setup and how to deal with collections, tours, highlights and
+the knobs to turn — it is pulled in via the import above and is not repeated here. What
+follows is only what trips you up while working in the code.
 
-Projektsprache ist Deutsch — Kommentare, Commits und Doku auf Deutsch halten.
+## Language
 
-## Verifikation
+The repository language is English: code, identifiers, comments, docstrings, CLI help and
+error messages, documentation, workflow files and commit messages.
 
-Es gibt keine Tests, keinen Linter und kein Build-System. Das Skript *ist* der Test:
-`python3 map_cover.py` läuft durch und schreibt je Collection ein PNG nach `out/`, oder es
-bricht ab. Eine Änderung gilt erst als geprüft, wenn das erzeugte Bild angesehen wurde —
-insbesondere bei allem, was Positionen betrifft, denn für Labels existiert keine
-Kollisionsprüfung. Wer nur an einer Collection arbeitet, hängt ihren Ordnernamen an
-(`python3 map_cover.py brandy-haiger`); wer am gemeinsamen Layout dreht, prüft alle, denn
-jede Collection hat einen anderen Kartenausschnitt.
+The *content* of a collection stays German, because it names real places and is what
+readers of the komoot collection see:
 
-Für die Seite gilt dasselbe: `python3 build_site.py` läuft nach `map_cover.py` und schreibt
-`site/`. Geprüft ist eine Änderung erst, wenn `site/index.html` im Browser angesehen wurde —
-Home, eine Collection-Unterseite und die Icon-Liste. Der Workflow
-`.github/workflows/karten.yml` macht beides in CI: im Pull Request als Artefakt
-`collection-icons`, auf `main` als GitHub Page.
+- everything visible in `gpx/<collection>/collection.json` — `name`, `title`, `subtitle`,
+  the `label` of highlights and endpoints, and free-text `note` fields,
+- the GPX file names from the komoot export and the data inside them.
 
-Zielverzeichnis und Fonts sind nicht mehr hart verdrahtet: `out/` wird angelegt, wenn es
-fehlt, und `F(...)` weicht auf DejaVu bzw. Liberation aus, wenn die Google-Fonts fehlen.
-Ein Lauf auf einer fremden Maschine sagt darum nichts über die endgültige Typografie —
-Schriftmetriken unterscheiden sich, Zeilen können anders brechen oder überlappen.
+Everything that describes those values — field names, keys, comments about them — is
+English. A German label in a JSON file is correct; a German variable name is not.
 
-## Architektur
+## Verification
 
-`map_cover.py` hat zwei Hälften. Oben stehen Konfiguration und GPX-Helfer (`load`, `cum`,
-`seg`, `at`, `discover`, `read_config`), unten zeichnet `render(cfg, out_path)` eine
-Collection auf eine PIL-Leinwand. Innerhalb von `render` ist die Reihenfolge im File die
-Zeichenreihenfolge (Papierkorn → Wald → Flüsse → Routen → Highlights → Endpunkte →
-Kompass → Kartusche). Wer etwas verschiebt, ändert damit, was was überdeckt.
+There are no tests, no linter and no build system. The script *is* the test:
+`python3 map_cover.py` either runs through and writes one PNG per collection into `out/`,
+or it aborts. A change counts as checked only once the resulting image has been looked at —
+especially anything touching positions, since there is no collision detection for labels.
+If you only work on one collection, append its folder name
+(`python3 map_cover.py brandy-haiger`); if you change the shared layout, check all of them,
+because every collection has a different map frame.
 
-`main()` sucht über `discover()` alle Unterordner von `gpx/`, die GPX enthalten, und ruft
-für jeden `read_config` und `render` auf. Jede Collection ist vollständig für sich: eigener
-Ausschnitt, eigene Highlights, eigene Ausgabedatei. Gemeinsam sind nur die Konstanten am
-Dateikopf (`S`, `W`/`H`, Farben, `BOX`) und die Motive in `icons.py`.
+The same goes for the site: `python3 build_site.py` runs after `map_cover.py` and writes
+`site/`. A change is checked only once `site/index.html` has been looked at in a browser —
+home, a collection subpage and the icon list. The workflow `.github/workflows/maps.yml`
+does both in CI: in a pull request as the artifact `collection-icons`, on `main` as a
+GitHub Page.
 
-Tragende Konzepte:
+The target directory and the fonts are no longer hard-wired: `out/` is created when
+missing, and `F(...)` falls back to DejaVu or Liberation when the Google fonts are absent.
+A run on someone else's machine therefore says nothing about the final typography — font
+metrics differ, lines can break or overlap differently.
 
-- **Konfiguration statt Code.** Alles Collection-Spezifische steht in
-  `gpx/<collection>/collection.json`, nicht im Skript. Neue Touren, Highlights oder Titel
-  gehören dorthin; `map_cover.py` wird nur angefasst, wenn sich das *Kartenbild an sich*
-  ändert. `read_config` füllt fehlende Felder aus dem Ordner auf, deshalb muss jedes neue
-  Feld dort ein `setdefault` bekommen — ein Ordner ohne `collection.json` muss weiter
-  durchlaufen.
-- **Referenzen über Kürzel.** Highlights und Flüsse zeigen per `"route"` auf einen `key`
-  aus `routes`; `route_of` löst auf und wirft mit lesbarer Meldung, wenn das Kürzel nicht
-  existiert. `icon_of` macht dasselbe für Motivnamen aus `icons.py`. Beides ist absichtlich
-  laut — eine stille Karte ohne Highlight fällt sonst niemandem auf.
-- **Supersampling.** `S=2` skaliert die gesamte Leinwand; am Ende wird per LANCZOS auf
-  1600×1200 zurückgerechnet. Deshalb muss *jede* neue Pixelgröße mit `*S` multipliziert
-  werden — sonst wird das Element bei Änderung von `S` falsch groß. Werte aus der JSON
-  (`offset`, `size`) sind unskaliert und werden beim Zeichnen mit `*S` versehen.
-- **Projektion.** `merc`/`P`/`PA` bilden Web-Mercator ab. Sie sind lokal in `render`, weil
-  Maßstab und Zentrum aus der Bounding Box der Routen *dieser* Collection kommen, gerahmt
-  von `BOX`. Eine neue Tour verschiebt damit das Layout ihrer Collection und nur das.
-- **GPX-Zugriff über Kilometermarken.** `cum` liefert die kumulierte Haversine-Distanz;
-  darauf setzen `at(route, km)` (Punkt bei km) und `seg(route, k0, k1)` (Teilstück) auf.
-  Koordinaten kommen immer über `km`, nie geschätzt — Ausnahme sind Endpunkte wie Haiger
-  und Brandoberndorf, die als Ortsmittelpunkte mit `lat`/`lon` in der JSON stehen.
-- **Masken statt Geodaten.** Die Waldfläche ist eine geblurrte Graustufenmaske aus
-  Ellipsen entlang der Routen (`forest`); Bäume werden nur dort gestempelt, wo `fmask`
-  hell genug und `rmask` (Route) frei ist. Die Flüsse sind Routenabschnitte via `seg`.
-- **Determinismus.** Alle `random.Random(...)` haben feste Seeds (7, 11, 41, 23) und werden
-  in `render` neu gesetzt, damit die Reihenfolge der Collections das Bild nicht beeinflusst.
-  Seeds nur bewusst ändern; sie sind die Stellschraube für die Streuung, nicht Rauschen.
+## Architecture
 
-`build_site.py` hängt an derselben Konfiguration: es importiert `discover`, `read_config`,
-`slugify` und `PAPER` aus `map_cover.py`, statt Pfade oder Farben zu wiederholen. Die
-Motivliste der Icon-Seite kommt nicht aus einer Aufzählung, sondern aus der Signatur —
-jede Funktion in `icons.py`, deren erste vier Parameter `d, x, y, s` heißen, ist ein Motiv;
-`poly` und `circ` fallen dadurch heraus. Gestempelt wird groß und dann auf das tatsächlich
-Gezeichnete beschnitten, weil die Motive unterschiedlich weit über ihren Radius hinausgehen.
+`map_cover.py` has two halves. On top sit the configuration and the GPX helpers (`load`,
+`cum`, `seg`, `at`, `discover`, `read_config`); below, `render(cfg, out_path)` draws one
+collection onto a PIL canvas. Inside `render`, the order in the file is the drawing order
+(paper grain → woodland → rivers → routes → highlights → endpoints → compass → cartouche).
+Moving something changes what covers what.
 
-`icons.py` enthält ausschließlich die Motive. Jedes folgt der Signatur `fn(d, x, y, s)` mit
-`s` als Radius-Maßstab — der Aufrufer übergibt bereits `*S`, in der Icon-Funktion also
-nicht erneut skalieren. Motive zeichnen relativ zu `x,y` und geben nichts zurück.
-Bausteine: `poly`, `circ`, `tree`. Der Funktionsname ist die öffentliche Schnittstelle:
-er steht als `"icon"` in den JSONs, Umbenennen bricht sie.
+`main()` uses `discover()` to find every subfolder of `gpx/` containing GPX files and calls
+`read_config` and `render` for each. Every collection is entirely self-contained: its own
+frame, its own highlights, its own output file. Only the constants at the top of the file
+(`S`, `W`/`H`, colors, `BOX`) and the icons in `icons.py` are shared.
 
-## Daten
+Load-bearing concepts:
 
-Die GPX in `gpx/<collection>/` sind getrackt und bleiben es — ohne sie läuft das Skript
-nicht. Sie enthalten Start- und Endpunkt metergenau, also eine Wohnadresse; das ist bewusst
-so entschieden und keine offene Frage. Die `.gitignore` deckt Ausgabe-PNGs, `out/`,
-`__pycache__`, `*.pyc` und `.venv/` ab; `collection.json` gehört dagegen ins Repo.
+- **Configuration instead of code.** Everything collection-specific lives in
+  `gpx/<collection>/collection.json`, not in the script. New tours, highlights or titles
+  belong there; `map_cover.py` is only touched when the *map image itself* changes.
+  `read_config` fills missing fields from the folder, so every new field needs a
+  `setdefault` there — a folder without a `collection.json` has to keep working.
+- **References via keys.** Highlights and rivers point at a `key` from `routes` via
+  `"route"`; `route_of` resolves it and raises with a readable message when the key does
+  not exist. `icon_of` does the same for icon names from `icons.py`. Both are loud on
+  purpose — a silently missing highlight would otherwise go unnoticed.
+- **Supersampling.** `S=2` scales the entire canvas; at the end it is resampled down to
+  1600×1200 via LANCZOS. That is why *every* new pixel size has to be multiplied by `*S` —
+  otherwise the element gets the wrong size when `S` changes. Values from the JSON
+  (`offset`, `size`) are unscaled and get their `*S` at drawing time.
+- **Projection.** `merc`/`P`/`PA` implement Web Mercator. They live inside `render` because
+  scale and center come from the bounding box of *this* collection's routes, framed by
+  `BOX`. A new tour therefore shifts the layout of its own collection and nothing else.
+- **GPX access via kilometre marks.** `cum` returns the cumulative haversine distance;
+  `at(route, km)` (point at km) and `seg(route, k0, k1)` (section) build on it. Coordinates
+  always come via `km`, never estimated — the exception are endpoints such as Haiger and
+  Brandoberndorf, which sit in the JSON as town centres with `lat`/`lon`.
+- **Masks instead of geodata.** The woodland is a blurred greyscale mask of ellipses along
+  the routes (`forest`); trees are only stamped where `fmask` is bright enough and `rmask`
+  (route) is clear. The rivers are route sections via `seg`.
+- **Determinism.** Every `random.Random(...)` has a fixed seed (7, 11, 41, 23) and is reset
+  inside `render`, so the order of the collections does not influence the image. Change
+  seeds deliberately only; they are the knob for the scatter, not noise.
+
+`build_site.py` hangs off the same configuration: it imports `discover`, `read_config`,
+`slugify` and `PAPER` from `map_cover.py` instead of repeating paths or colors. The icon
+list of the icon page does not come from an enumeration but from the signature — every
+function in `icons.py` whose first four parameters are named `d, x, y, s` is an icon, which
+is what drops `poly` and `circ`. Icons are stamped large and then cropped to what was
+actually drawn, because they reach past their radius by different amounts.
+
+`icons.py` contains nothing but the icons. Each follows the signature `fn(d, x, y, s)` with
+`s` as the radius scale — the caller already passes `*S`, so do not scale again inside the
+icon function. Icons draw relative to `x,y` and return nothing. Building blocks: `poly`,
+`circ`, `tree`. The function name is the public interface: it appears as `"icon"` in the
+JSON files, renaming it breaks them.
+
+## Data
+
+The GPX files in `gpx/<collection>/` are tracked and stay that way — without them the
+script does not run. They contain start and end point to the metre, i.e. a home address;
+that is a deliberate decision and not an open question. The `.gitignore` covers output
+PNGs, `out/`, `__pycache__`, `*.pyc` and `.venv/`; `collection.json`, by contrast, belongs
+in the repository.

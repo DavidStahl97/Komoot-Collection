@@ -1,59 +1,62 @@
-# Karten für komoot-Collections
+# Maps for komoot collections
 
-Generator für die Titelbilder meiner komoot-Collections. Die erste ist
+Generator for the cover images of my komoot collections. The first one is
 [„Brandy <-> Haiger"](https://www.komoot.com/collection/4605392/-brandy-haiger) —
-Gravel-Routen zwischen Haiger und Brandoberndorf im Lahn-Dill-Bergland; weitere
-kommen als eigene Ordner dazu.
+gravel routes between Haiger and Brandoberndorf in the Lahn-Dill-Bergland; more
+will follow as their own folders.
 
-Aus den GPX-Exporten der Touren entsteht eine illustrierte Karte im Stil einer
-alten Wanderkarte: getöntes Papier, gestrichelte Wege, gestempelte Wälder und
-kleine gezeichnete Motive an den Highlights. Kein Netz nötig, keine externen
-Assets, keine Bild-KI — jede Linie kommt aus PIL-Primitiven. Das Ergebnis ist
-1600×1200 Pixel groß, weil komoot die Vorschau im Seitenverhältnis 4:3 rendert
-und bei 3:2 links und rechts beschneidet.
+From the GPX exports of the tours it draws an illustrated map in the style of an
+old hiking map: tinted paper, dashed paths, stamped woodland and small hand-drawn
+icons at the highlights. No network needed, no external assets, no image AI —
+every line comes from PIL primitives. The result is 1600×1200 pixels, because
+komoot renders the preview in a 4:3 aspect ratio and crops left and right at 3:2.
 
-## Loslegen
+Note on language: code, comments and documentation are English. The *content* of a
+collection stays German — the labels in `collection.json` (title, subtitle,
+highlights, endpoints) and the GPX file names, since they name real places.
+
+## Getting started
 
 ```bash
 pip install pillow numpy
-python3 map_cover.py                 # alle Collections unter gpx/ nach out/
-python3 map_cover.py brandy-haiger   # nur diese eine
-python3 map_cover.py --out /pfad/zu/cover
+python3 map_cover.py                 # every collection under gpx/ into out/
+python3 map_cover.py brandy-haiger   # only this one
+python3 map_cover.py --out /path/to/cover
 ```
 
-Aus dem Repo-Wurzelverzeichnis starten — die Pfade sind relativ gesetzt und lassen
-sich mit `--gpx` und `--out` verschieben. Fehlen die Google-Fonts Lora und Poppins
-unter `/usr/share/fonts/truetype/google-fonts/`, weicht das Skript auf DejaVu bzw.
-Liberation aus: Das Layout bleibt, die Schrift sieht anders aus.
+Run it from the repository root — the paths are relative and can be moved with
+`--gpx` and `--out`. If the Google fonts Lora and Poppins are missing under
+`/usr/share/fonts/truetype/google-fonts/`, the script falls back to DejaVu and
+Liberation: the layout stays, the typeface looks different.
 
-Jeder Lauf erzeugt exakt dasselbe Bild — alle Zufallszahlen haben feste Seeds.
+Every run produces exactly the same image — all random numbers have fixed seeds.
 
-## Was wo liegt
+## What lives where
 
-| Datei | Zweck |
+| File | Purpose |
 |---|---|
-| `map_cover.py` | Findet die Collections und baut jede Karte, von oben nach unten in Schichten. |
-| `icons.py` | Die gezeichneten Motive: Fuchs, See, Windräder-Berg, Radweg, Fluss, idyllischer Weg, Dill, Grube, Hai, Haus im Wald. |
-| `build_site.py` | Baut aus den erzeugten Karten die GitHub-Page: Home, Collections, Icons. |
-| `gpx/<collection>/` | Ein Ordner je Collection: die GPX-Exporte und optional eine `collection.json`. Ohne sie läuft nichts. |
-| `out/` | Die erzeugten PNGs. Nicht eingecheckt. |
-| `site/` | Die erzeugte Seite. Nicht eingecheckt. |
-| `.github/workflows/karten.yml` | Rendert bei jedem Push und Pull Request, hängt die Bilder an den PR und veröffentlicht die Seite. |
+| `map_cover.py` | Finds the collections and builds each map, in layers from top to bottom. |
+| `icons.py` | The drawn icons: fox, lake, wind-turbine hill, cycle path, river, idyllic path, dill, mine, shark, house in the woods. |
+| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons. |
+| `gpx/<collection>/` | One folder per collection: the GPX exports and optionally a `collection.json`. Nothing runs without them. |
+| `out/` | The rendered PNGs. Not checked in. |
+| `site/` | The generated site. Not checked in. |
+| `.github/workflows/maps.yml` | Renders on every push and pull request, attaches the images to the PR and publishes the site. |
 
-## Eine neue Collection anlegen
+## Adding a new collection
 
-1. Ordner unter `gpx/` anlegen, etwa `gpx/westerwald-runden/`.
-2. Die GPX-Exporte aus komoot hineinlegen.
-3. `python3 map_cover.py` — der Ordner wird von allein gefunden.
+1. Create a folder under `gpx/`, e.g. `gpx/westerwald-runden/`.
+2. Put the GPX exports from komoot into it.
+3. `python3 map_cover.py` — the folder is picked up on its own.
 
-Das reicht schon für eine fertige Karte: Ausschnitt, Waldfläche und Baumstempel
-skalieren mit der gemeinsamen Bounding Box der Routen *dieses* Ordners, der Titel
-kommt aus dem Ordnernamen (`westerwald-runden` → `WESTERWALD` / `RUNDEN`), die
-Datei heißt `out/westerwald-runden.png`. Collections beeinflussen sich nicht
-gegenseitig — jede bekommt ihren eigenen Kartenausschnitt.
+That alone is enough for a finished map: frame, woodland and tree stamps scale
+with the shared bounding box of the routes in *this* folder, the title comes from
+the folder name (`westerwald-runden` → `WESTERWALD` / `RUNDEN`), and the file is
+called `out/westerwald-runden.png`. Collections do not affect each other — each
+one gets its own map frame.
 
-Titel, Highlights, Flüsse und Endpunkte kommen in eine `collection.json` im selben
-Ordner. Sie ist optional, und jedes Feld darin ist es auch:
+Title, highlights, rivers and endpoints go into a `collection.json` in the same
+folder. It is optional, and so is every field in it:
 
 ```json
 {
@@ -73,116 +76,121 @@ Ordner. Sie ist optional, und jedes Feld darin ist es auch:
 }
 ```
 
-| Feld | Bedeutung |
+The visible strings in there — `name`, `title`, `subtitle`, `label` — are German
+on purpose; they are the content of the collection, not part of the code.
+
+| Field | Meaning |
 |---|---|
-| `name` | Nur für die Konsolenausgabe. Default: Ordnername. |
-| `output` | Dateiname im Zielordner. Default: `<ordnername>.png`. |
-| `title` | Zeilen der Kartusche in Großschrift. Leere Liste = keine Kartusche. |
-| `arrow` | Doppelpfeil zwischen zwei Titelzeilen. Default: an, wenn es genau zwei sind. |
-| `subtitle` | Kursive Zeilen unter dem Trennstrich. |
-| `routes` | Reihenfolge und Kürzel der GPX. Nicht aufgeführte GPX des Ordners werden trotzdem gezeichnet. |
-| `rivers` | Flussabschnitte, abgeleitet aus `route` plus Kilometerbereich `from`/`to`. |
-| `highlights` | Motiv mit Beschriftung, siehe unten. |
-| `endpoints` | Start und Ziel mit fester Koordinate, Motiv und Balkenbeschriftung. |
+| `name` | Console output only. Default: folder name. |
+| `output` | File name in the target folder. Default: `<foldername>.png`. |
+| `title` | Lines of the cartouche in capitals. Empty list = no cartouche. |
+| `arrow` | Double arrow between two title lines. Default: on when there are exactly two. |
+| `subtitle` | Italic lines below the divider. |
+| `routes` | Order and keys of the GPX files. GPX files not listed are still drawn. |
+| `rivers` | River sections, derived from `route` plus the kilometre range `from`/`to`. |
+| `highlights` | Icon with a label, see below. |
+| `endpoints` | Start and finish with a fixed coordinate, icon and bar label. |
 
-Die Kartusche wächst mit Zeilenzahl und Textbreite mit und bleibt dabei unten links
-verankert — längere Titel sprengen sie also nicht.
+The cartouche grows with the number of lines and the width of the text while
+staying anchored in the bottom left — longer titles do not break it.
 
-## Die Touren
+## The tours
 
-Aktuell eingebunden, in `gpx/brandy-haiger/`:
+Currently included, in `gpx/brandy-haiger/`:
 
-| Datei | Tour | Distanz | Höhenmeter |
+| File | Tour | Distance | Elevation |
 |---|---|---|---|
-| `______ber_Greifenstein.gpx` | Über Greifenstein | 69,7 km | 1.150 hm |
-| `_____Fuchskaute___Ulmtalradweg.gpx` | Fuchskaute – Ulmtalradweg | 73,5 km | 750 hm |
-| `_____Dilltalradweg.gpx` | Dilltalradweg | 56,6 km | 470 hm |
-| `______ber_den_Knoten.gpx` | Über den Knoten | 80,1 km | 1.090 hm |
+| `______ber_Greifenstein.gpx` | Über Greifenstein | 69.7 km | 1,150 m |
+| `_____Fuchskaute___Ulmtalradweg.gpx` | Fuchskaute – Ulmtalradweg | 73.5 km | 750 m |
+| `_____Dilltalradweg.gpx` | Dilltalradweg | 56.6 km | 470 m |
+| `______ber_den_Knoten.gpx` | Über den Knoten | 80.1 km | 1,090 m |
 
-Die kryptischen Dateinamen stammen aus dem komoot-Export, der Umlaute zu
-Unterstrichen macht. Umbenennen geht, dann aber auch die `file`-Einträge in der
-`collection.json` mitziehen.
+The cryptic file names come from the komoot export, which turns umlauts into
+underscores. Renaming them works, but then the `file` entries in the
+`collection.json` have to follow.
 
-Die GPX enthalten Start- und Endpunkt der Touren metergenau — in einem
-öffentlichen Repo ist das eine lesbare Wohnadresse. Hier ist das bewusst so
-entschieden; wer das Projekt für eigene Touren nachbaut, sollte die Frage für
-sich neu beantworten.
+The GPX files contain the start and end point of the tours to the metre — in a
+public repository that is a readable home address. Here this is a deliberate
+decision; anyone rebuilding this project for their own tours should answer the
+question for themselves.
 
-## Eine Tour ergänzen
+## Adding a tour
 
-GPX exportieren und in den Ordner der Collection legen. Steht dort keine
-`routes`-Liste, ist damit alles getan; sonst noch einen Eintrag `{"key": "…",
-"file": "…"}` ergänzen, damit sie sich in Highlights und Flüssen ansprechen lässt.
-Kartenausschnitt, Waldfläche und Baumstempel skalieren automatisch mit der
-gemeinsamen Bounding Box aller Routen der Collection.
+Export the GPX and drop it into the collection's folder. If there is no `routes`
+list, that is all there is to it; otherwise add an entry `{"key": "…", "file":
+"…"}` so it can be referenced from highlights and rivers. Map frame, woodland and
+tree stamps scale automatically with the shared bounding box of all routes in the
+collection.
 
-## Ein Highlight ergänzen
+## Adding a highlight
 
-Koordinaten nicht schätzen. Die komoot-Tourseite nennt zu jedem Highlight eine
-Kilometermarke, und `route` plus `km` läuft die GPX bis dorthin ab und liefert den
-echten Punkt. Nur wo es keine Kilometermarke gibt — Ortsmittelpunkte etwa —
-stehen `lat`/`lon` direkt in der Konfiguration:
+Do not guess coordinates. The komoot tour page gives a kilometre mark for every
+highlight, and `route` plus `km` walks the GPX up to that point and returns the
+real position. Only where there is no kilometre mark — town centres, for example —
+do `lat`/`lon` go straight into the configuration:
 
 ```json
 {"label": "Name", "route": "FU", "km": 17.0, "icon": "fox", "side": "l", "offset": [-6, -56], "size": 34}
 ```
 
-`offset` verschiebt nur das Label, `"l"` lässt es rechtsbündig am Punkt enden,
-`"r"` setzt es rechts daneben, `"c"` zentriert. Eine Kollisionsprüfung gibt es
-nicht — Bild ansehen und nachjustieren.
+`offset` moves the label only, `"l"` makes it end flush right at the point, `"r"`
+puts it to the right of the point, `"c"` centres it. There is no collision
+detection — look at the image and adjust.
 
-Ein neues Motiv wird eine Funktion in `icons.py` nach dem Muster `fn(d, x, y, s)`,
-wobei `s` der Radius-Maßstab ist; ihr Name ist der Wert von `"icon"`. `poly`,
-`circ` und `tree` stehen als Bausteine bereit.
+A new icon becomes a function in `icons.py` following the pattern `fn(d, x, y, s)`,
+where `s` is the radius scale; its name is the value of `"icon"`. `poly`, `circ`
+and `tree` are available as building blocks.
 
-## GitHub Actions und die Seite
+## GitHub Actions and the site
 
-`.github/workflows/karten.yml` läuft bei jedem Push auf `main` und bei jedem Pull
-Request. Beide Male werden die Karten gerendert und die Seite gebaut:
+`.github/workflows/maps.yml` runs on every push to `main` and on every pull
+request. Both times the maps are rendered and the site is built:
 
-- **Im Pull Request** hängen die Bilder als Artefakt `collection-icons` am Lauf —
-  die Titelbilder aus `out/` und jedes einzelne Motiv aus `icons.py`. Weil es keine
-  Tests gibt, ist das Herunterladen und Ansehen dieses Artefakts die Prüfung.
-- **Auf `main`** wird die Seite zusätzlich über GitHub Pages veröffentlicht. Dafür
-  muss in den Repo-Einstellungen unter *Pages* als Quelle *GitHub Actions* gewählt
-  sein; der Workflow braucht keine weiteren Secrets.
+- **In a pull request** the images are attached to the run as the artifact
+  `collection-icons` — the cover images from `out/` and every single icon from
+  `icons.py`. Since there are no tests, downloading and looking at this artifact
+  *is* the check.
+- **On `main`** the site is additionally published via GitHub Pages. For that,
+  *GitHub Actions* has to be selected as the source under *Pages* in the
+  repository settings; the workflow needs no further secrets.
 
-Die Seite hat drei Bereiche: **Home** listet alle Collections mit ihrem Titelbild,
-**Collections** führt zu je einer Unterseite pro Collection (großes Bild, Touren,
-Highlights mit Motiv), **Icons** zeigt alle Motive aus `icons.py` mit ihrem
-Funktionsnamen — also mit dem Wert, der als `"icon"` in die `collection.json` gehört.
-Lokal:
+The site has three areas: **Home** lists all collections with their cover image,
+**Collections** leads to one subpage per collection (large image, tours,
+highlights with their icon), **Icons** shows every icon from `icons.py` with its
+function name — that is, with the value that belongs in `collection.json` as
+`"icon"`. Locally:
 
 ```bash
 python3 map_cover.py --out out
 python3 build_site.py --png out --out site
 ```
 
-Neue Motive und neue Collections tauchen von allein auf: `build_site.py` sammelt die
-Collections über `discover()` und die Motive über die Signatur `fn(d, x, y, s)`.
+New icons and new collections show up on their own: `build_site.py` collects the
+collections via `discover()` and the icons via the signature `fn(d, x, y, s)`.
 
-Lora und Poppins fehlen den GitHub-Runnern; der Workflow lädt sie vor dem Rendern
-nach. Schlägt das fehl, greift der Fallback auf DejaVu/Liberation — die Karte
-entsteht trotzdem, nur die Schrift sieht anders aus.
+The GitHub runners do not have Lora and Poppins; the workflow fetches them before
+rendering. If that fails, the fallback to DejaVu/Liberation kicks in — the map is
+still created, only the typeface looks different.
 
-## Woran man drehen kann
+## Knobs to turn
 
-| Stelle | Wirkung |
+| Place | Effect |
 |---|---|
-| `random.Random(23)` | Streuung der Waldbäume. Andere Zahl = andere Verteilung. |
-| `for _ in range(26)` (bei `rnd2`) | Anzahl der weichen Randflächen. Mehr = vollere Ecken. |
-| `for _ in range(420)` | Blasse Randbäume. Zu hoch gesetzt sieht es nach Tapete aus. |
-| `BOX = (...)` | Kartenausschnitt auf dem Blatt. Gilt für alle Collections. |
+| `random.Random(23)` | Scatter of the woodland trees. Different number = different distribution. |
+| `for _ in range(26)` (at `rnd2`) | Number of soft edge patches. More = fuller corners. |
+| `for _ in range(420)` | Pale edge trees. Set too high it looks like wallpaper. |
+| `BOX = (...)` | Map frame on the sheet. Applies to all collections. |
 
-## Was die Karte nicht kann
+## What the map cannot do
 
-- Die Waldfläche ist eine weiche Hülle um die Routen, keine echten Waldflächen —
-  Landnutzungsdaten gibt es im Projekt nicht.
-- Die Flüsse (Lahn, Dill) sind aus Streckenabschnitten abgeleitet und stimmen nur
-  dort, wo die Route tatsächlich am Fluss entlangführt.
-- Kompass (unten rechts) und Kartusche (unten links) sind fest positioniert; die
-  Kartusche wächst zwar mit ihrem Text, weicht Routen darunter aber nicht aus.
-- Die Höhendaten in komoot-GPX sind geglättet; kurze Steilrampen über ~15 %
-  tauchen darin nicht auf. Für Steigungsanalysen ist die aufgezeichnete Fahrt
-  aussagekräftiger — und selbst da ist die Geschwindigkeit der ehrlichere
-  Indikator als die Höhenkurve.
+- The woodland is a soft hull around the routes, not actual forest areas — there
+  is no land-use data in the project.
+- The rivers (Lahn, Dill) are derived from route sections and are only correct
+  where the route really follows the river.
+- Compass (bottom right) and cartouche (bottom left) are placed at fixed
+  positions; the cartouche does grow with its text but does not dodge routes
+  underneath it.
+- The elevation data in komoot GPX files is smoothed; short steep ramps above
+  ~15 % do not show up in it. For gradient analysis the recorded ride is more
+  meaningful — and even there, speed is the more honest indicator than the
+  elevation curve.

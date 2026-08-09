@@ -1,11 +1,11 @@
-"""Erzeugt aus jedem Unterordner von gpx/ ein Titelbild fuer die komoot-Collection.
+"""Renders a cover image for every komoot collection found under gpx/.
 
-Jede Collection ist ein Ordner unter gpx/ mit ihren GPX-Dateien und optional einer
-collection.json (Titel, Highlights, Fluesse, Endpunkte). Ohne collection.json wird
-die Karte aus allen GPX des Ordners gezeichnet, der Ordnername wird zum Titel.
+A collection is a folder below gpx/ holding its GPX files and optionally a
+collection.json (title, highlights, rivers, endpoints). Without a collection.json
+the map is drawn from every GPX in the folder and the folder name becomes the title.
 
-    python3 map_cover.py                 # alle Collections nach out/
-    python3 map_cover.py brandy-haiger   # nur diese
+    python3 map_cover.py                 # every collection into out/
+    python3 map_cover.py brandy-haiger   # only this one
     python3 map_cover.py --out /tmp/cover
 """
 import argparse, json, math, os, random, sys
@@ -18,11 +18,11 @@ NS = '{http://www.topografix.com/GPX/1/1}'
 GPX_ROOT = 'gpx'
 OUT_DIR = 'out'
 
-S = 2                      # Supersampling
+S = 2                      # supersampling
 W, H = 1600 * S, 1200 * S
 PAPER = (243, 232, 208); INK = (59, 52, 42); MUTED = (126, 112, 88)
 ACCENT = (176, 96, 58)
-BOX = (300 * S, 70 * S, 1300 * S, 1130 * S)     # Kartenausschnitt auf dem Blatt
+BOX = (300 * S, 70 * S, 1300 * S, 1130 * S)     # map frame on the sheet
 
 FONT_DIRS = ["/usr/share/fonts/truetype/google-fonts",
              "/usr/share/fonts/truetype/dejavu",
@@ -33,7 +33,7 @@ FONT_FALLBACK = {"Lora-Italic-Variable": ["DejaVuSerif-Italic", "LiberationSerif
 
 
 def F(name, size):
-    """Font laden; wenn die Google-Fonts fehlen, auf eine Systemschrift ausweichen."""
+    """Load a font; fall back to a system font when the Google fonts are missing."""
     for cand in [name] + FONT_FALLBACK.get(name, []):
         for dirn in FONT_DIRS:
             p = os.path.join(dirn, cand + ".ttf")
@@ -42,15 +42,15 @@ def F(name, size):
     return ImageFont.load_default()
 
 
-# ---------------------------------------------------------------- GPX-Helfer
+# --------------------------------------------------------------- GPX helpers
 def load(path):
     r = ET.parse(path).getroot()
     pts = [(float(t.get('lat')), float(t.get('lon'))) for t in r.iter(NS + 'trkpt')]
-    if not pts:                                   # GPX ohne Namespace / nur Route
+    if not pts:                                   # GPX without namespace / route only
         pts = [(float(t.get('lat')), float(t.get('lon')))
                for t in r.iter() if t.tag.endswith('trkpt') or t.tag.endswith('rtept')]
     if not pts:
-        raise ValueError("keine Trackpunkte in %s" % path)
+        raise ValueError("no track points in %s" % path)
     return np.array(pts)
 
 
@@ -70,9 +70,9 @@ def at(a, km):
     return float(a[i, 0]), float(a[i, 1])
 
 
-# ------------------------------------------------------------ Collection lesen
+# ------------------------------------------------------- reading a collection
 def discover(root=GPX_ROOT):
-    """Alle Unterordner von gpx/ mit mindestens einer GPX-Datei."""
+    """Every subfolder of gpx/ holding at least one GPX file."""
     if not os.path.isdir(root):
         return []
     out = []
@@ -81,11 +81,12 @@ def discover(root=GPX_ROOT):
         if os.path.isdir(d) and any(f.lower().endswith('.gpx') for f in os.listdir(d)):
             out.append(d)
     if not out and any(f.lower().endswith('.gpx') for f in os.listdir(root)):
-        out.append(root)                          # flaches gpx/ (Altbestand)
+        out.append(root)                          # flat gpx/ (legacy layout)
     return out
 
 
 def slugify(name):
+    """Collection or folder name -> file-safe slug; German umlauts are transliterated."""
     keep = "abcdefghijklmnopqrstuvwxyz0123456789-_"
     s = name.lower().replace(' ', '-')
     for a, b in (('ä', 'ae'), ('ö', 'oe'), ('ü', 'ue'), ('ß', 'ss')):
@@ -95,7 +96,7 @@ def slugify(name):
 
 
 def read_config(folder):
-    """collection.json einlesen und mit Defaults aus dem Ordner auffuellen."""
+    """Read collection.json and fill missing fields with defaults from the folder."""
     cfg = {}
     p = os.path.join(folder, 'collection.json')
     if os.path.exists(p):
@@ -121,13 +122,13 @@ def read_config(folder):
             e = {'key': os.path.splitext(e)[0], 'file': e}
         fp = os.path.join(folder, e['file'])
         if not os.path.exists(fp):
-            raise FileNotFoundError("%s: GPX fehlt: %s" % (cfg['name'], e['file']))
+            raise FileNotFoundError("%s: missing GPX: %s" % (cfg['name'], e['file']))
         key = e.get('key') or os.path.splitext(e['file'])[0]
         routes[key] = load(fp)
         order.append(key)
 
     known = {os.path.basename(e['file']) if isinstance(e, dict) else e for e in entries}
-    for f in files:                               # nicht konfigurierte GPX trotzdem zeichnen
+    for f in files:                               # draw unconfigured GPX as well
         if f not in known:
             key = os.path.splitext(f)[0]
             routes[key] = load(os.path.join(folder, f)); order.append(key)
@@ -140,7 +141,7 @@ def read_config(folder):
 def route_of(cfg, key):
     r = cfg['_routes'].get(key)
     if r is None:
-        raise KeyError("%s: unbekannte Route '%s' (bekannt: %s)"
+        raise KeyError("%s: unknown route '%s' (known: %s)"
                        % (cfg['name'], key, ', '.join(cfg['_order'])))
     return r
 
@@ -148,17 +149,17 @@ def route_of(cfg, key):
 def icon_of(name):
     fn = getattr(IC, name, None)
     if not callable(fn):
-        raise KeyError("unbekanntes Icon '%s' — in icons.py anlegen" % name)
+        raise KeyError("unknown icon '%s' — add it to icons.py" % name)
     return fn
 
 
-# ------------------------------------------------------------------- Rendern
+# ----------------------------------------------------------------- rendering
 def render(cfg, out_path):
     ROUTES = [cfg['_routes'][k] for k in cfg['_order']]
 
     img = Image.new('RGB', (W, H), PAPER)
 
-    # Papierkorn
+    # paper grain
     rnd = random.Random(7)
     grain = Image.new('L', (W // 4, H // 4))
     grain.putdata([rnd.randint(0, 255) for _ in range(grain.size[0] * grain.size[1])])
@@ -167,7 +168,7 @@ def render(cfg, out_path):
                           grain.point(lambda v: 20 if v > 150 else 0))
     d = ImageDraw.Draw(img)
 
-    # Projektion (gemeinsame Bounding Box aller Routen der Collection)
+    # projection (shared bounding box of every route in this collection)
     def merc(a):
         return np.radians(a[:, 1]), np.log(np.tan(np.pi / 4 + np.radians(a[:, 0]) / 2))
 
@@ -185,7 +186,7 @@ def render(cfg, out_path):
     def PA(a):
         X, Y = merc(a); return list(zip(MX + (X - cx) * sc, MY - (Y - cy) * sc))
 
-    # Waldflaechen (weiche Blobs entlang der Routen)
+    # woodland (soft blobs along the routes)
     forest = Image.new('L', (W, H), 0); fd = ImageDraw.Draw(forest)
     rnd = random.Random(11)
     for r in ROUTES:
@@ -220,7 +221,7 @@ def render(cfg, out_path):
         if 60 < fmask[x, y] <= 170 and rmask[x, y] == 0 and rnd.random() < 0.34:
             IC.tree(d, x, y, rnd.uniform(3.5, 5.5) * S, (202, 210, 180))
 
-    # Fluesse (aus Streckenabschnitten abgeleitet)
+    # rivers (derived from route segments)
     for w in cfg['rivers']:
         pts = PA(seg(route_of(cfg, w['route']), w['from'], w['to']))
         if len(pts) < 2:
@@ -229,7 +230,7 @@ def render(cfg, out_path):
         d.line(pts, fill=(150, 190, 206), width=int(wd * S * 1.9), joint='curve')
         d.line(pts, fill=(112, 164, 188), width=int(wd * S), joint='curve')
 
-    # Routen: gestrichelte Wanderkarten-Linie
+    # routes: dashed hiking-map line
     def dashed(pts, col, dash=14, gap=10, w=4):
         acc = 0; on = True; cur = [pts[0]]
         for i in range(1, len(pts)):
@@ -253,7 +254,7 @@ def render(cfg, out_path):
     for r in ROUTES:
         dashed(PA(r), ACCENT, w=4, dash=14, gap=10)
 
-    # Highlights
+    # highlights
     f_lab = F("Lora-Italic-Variable", 26); f_place = F("Poppins-Medium", 30)
 
     def label(x, y, txt, font, side):
@@ -269,7 +270,7 @@ def render(cfg, out_path):
         icon_of(hl['icon'])(d, x, y, hl.get('size', 34) * S)
         label(x + ox * S, y + oy * S, hl['label'], f_lab, hl.get('side', 'r'))
 
-    # Endpunkte
+    # endpoints
     for ep in cfg['endpoints']:
         x, y = P(ep['lat'], ep['lon'])
         icon_of(ep['icon'])(d, x, y, ep.get('size', 44) * S)
@@ -279,7 +280,7 @@ def render(cfg, out_path):
         d.rectangle([x - tw / 2 - 14 * S, yy, x + tw / 2 + 14 * S, yy + f_place.size + 12 * S], fill=INK)
         d.text((x - tw / 2, yy + 5 * S), name, font=f_place, fill=PAPER)
 
-    # Kompass
+    # compass
     ccx, ccy, cr = 1478 * S, 1086 * S, 54 * S
     d.ellipse([ccx - cr, ccy - cr, ccx + cr, ccy + cr], outline=ACCENT, width=3 * S)
     d.polygon([(ccx, ccy - cr * .82), (ccx - cr * .24, ccy + cr * .10), (ccx + cr * .24, ccy + cr * .10)], fill=ACCENT)
@@ -287,7 +288,7 @@ def render(cfg, out_path):
     f_n = F("Poppins-Medium", 22)
     d.text((ccx - d.textlength("N", font=f_n) / 2, ccy - cr - 32 * S), "N", font=f_n, fill=INK)
 
-    # Titel-Kartusche unten links (waechst mit der Zeilenzahl nach oben)
+    # title cartouche, bottom left (grows upwards with the number of lines)
     titles = list(cfg['title']); subs = list(cfg['subtitle'])
     if titles or subs:
         f_t = F("Poppins-Bold", 60); f_s = F("Lora-Italic-Variable", 27)
@@ -338,10 +339,10 @@ def render(cfg, out_path):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Titelbilder fuer komoot-Collections erzeugen")
-    ap.add_argument('collections', nargs='*', help="Ordnernamen unter gpx/ (Default: alle)")
-    ap.add_argument('--gpx', default=GPX_ROOT, help="Wurzelordner der Collections (Default: gpx)")
-    ap.add_argument('--out', default=OUT_DIR, help="Zielordner der PNGs (Default: out)")
+    ap = argparse.ArgumentParser(description="Render cover images for komoot collections")
+    ap.add_argument('collections', nargs='*', help="folder names below gpx/ (default: all)")
+    ap.add_argument('--gpx', default=GPX_ROOT, help="root folder of the collections (default: gpx)")
+    ap.add_argument('--out', default=OUT_DIR, help="target folder for the PNGs (default: out)")
     a = ap.parse_args(argv)
 
     folders = discover(a.gpx)
@@ -350,14 +351,14 @@ def main(argv=None):
         folders = [f for f in folders if os.path.basename(os.path.abspath(f)) in wanted]
         missing = wanted - {os.path.basename(os.path.abspath(f)) for f in folders}
         if missing:
-            sys.exit("Keine Collection gefunden: %s" % ', '.join(sorted(missing)))
+            sys.exit("no such collection: %s" % ', '.join(sorted(missing)))
     if not folders:
-        sys.exit("Keine Collection in %s/ gefunden — GPX in einen Unterordner legen." % a.gpx)
+        sys.exit("no collection found in %s/ — put the GPX files into a subfolder." % a.gpx)
 
     for folder in folders:
         cfg = read_config(folder)
         out = render(cfg, os.path.join(a.out, cfg['output']))
-        print("%-24s %d Routen -> %s" % (cfg['name'], len(cfg['_order']), out))
+        print("%-24s %d routes -> %s" % (cfg['name'], len(cfg['_order']), out))
 
 
 if __name__ == '__main__':
