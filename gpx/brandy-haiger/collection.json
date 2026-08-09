@@ -6,10 +6,10 @@
   "subtitle": ["Wege durch das", "Lahn-Dill-Bergland"],
 
   "routes": [
-    {"key": "FU", "file": "_____Fuchskaute___Ulmtalradweg.gpx"},
-    {"key": "KN", "file": "______ber_den_Knoten.gpx"},
-    {"key": "DI", "file": "_____Dilltalradweg.gpx"},
-    {"key": "GR", "file": "______ber_Greifenstein.gpx"}
+    {"key": "FU", "file": "_____Fuchskaute___Ulmtalradweg.gpx", "label": "Fuchskaute – Ulmtalradweg"},
+    {"key": "KN", "file": "______ber_den_Knoten.gpx", "label": "Über den Knoten"},
+    {"key": "DI", "file": "_____Dilltalradweg.gpx", "label": "Dilltalradweg"},
+    {"key": "GR", "file": "______ber_Greifenstein.gpx", "label": "Über Greifenstein"}
   ],
 
   "rivers": [

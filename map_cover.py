@@ -95,6 +95,16 @@ def slugify(name):
     return s.strip('-_') or "collection"
 
 
+def pretty(file_name):
+    """Fallback label for a tour: komoot export file name -> readable text.
+
+    The export replaces umlauts with underscores, so this only ever produces a
+    stopgap — a real name belongs in collection.json as "label".
+    """
+    s = os.path.splitext(os.path.basename(file_name))[0].replace('_', ' ').strip()
+    return s or os.path.splitext(os.path.basename(file_name))[0]
+
+
 def read_config(folder):
     """Read collection.json and fill missing fields with defaults from the folder."""
     cfg = {}
@@ -116,7 +126,7 @@ def read_config(folder):
     files = sorted(f for f in os.listdir(folder) if f.lower().endswith('.gpx'))
     entries = cfg.get('routes') or [{'key': os.path.splitext(f)[0], 'file': f} for f in files]
 
-    routes, order = {}, []
+    routes, order, labels, sources = {}, [], {}, {}
     for e in entries:
         if isinstance(e, str):
             e = {'key': os.path.splitext(e)[0], 'file': e}
@@ -126,15 +136,20 @@ def read_config(folder):
         key = e.get('key') or os.path.splitext(e['file'])[0]
         routes[key] = load(fp)
         order.append(key)
+        labels[key] = e.get('label') or pretty(e['file'])
+        sources[key] = e['file']
 
     known = {os.path.basename(e['file']) if isinstance(e, dict) else e for e in entries}
     for f in files:                               # draw unconfigured GPX as well
         if f not in known:
             key = os.path.splitext(f)[0]
             routes[key] = load(os.path.join(folder, f)); order.append(key)
+            labels[key] = pretty(f); sources[key] = f
 
     cfg['_routes'] = routes
     cfg['_order'] = order
+    cfg['_labels'] = labels                       # tour name for the site, keyed by route key
+    cfg['_files'] = sources
     return cfg
 
 
@@ -153,6 +168,36 @@ def icon_of(name):
     return fn
 
 
+# ---------------------------------------------------------------- projection
+def projection(routes, box):
+    """Web Mercator onto `box` — scale and centre come from the routes given.
+
+    Returns (P, PA): a single coordinate and a whole track as pixel positions. It
+    lives outside render() because build_site.py needs the same positions to put an
+    interactive overlay on top of the finished image — with box scaled down by S it
+    yields coordinates in the 1600x1200 output image.
+    """
+    def merc(a):
+        return np.radians(a[:, 1]), np.log(np.tan(np.pi / 4 + np.radians(a[:, 0]) / 2))
+
+    AX = np.concatenate([merc(r)[0] for r in routes])
+    AY = np.concatenate([merc(r)[1] for r in routes])
+    pad = 0.10
+    spanx = max(AX.max() - AX.min(), 1e-9); spany = max(AY.max() - AY.min(), 1e-9)
+    sc = min((box[2] - box[0]) / (spanx * (1 + pad)), (box[3] - box[1]) / (spany * (1 + pad)))
+    cx, cy = (AX.min() + AX.max()) / 2, (AY.min() + AY.max()) / 2
+    MX, MY = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+
+    def P(lat, lon):
+        x = math.radians(lon); y = math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+        return (MX + (x - cx) * sc, MY - (y - cy) * sc)
+
+    def PA(a):
+        X, Y = merc(a); return list(zip(MX + (X - cx) * sc, MY - (Y - cy) * sc))
+
+    return P, PA
+
+
 # ----------------------------------------------------------------- rendering
 def render(cfg, out_path):
     ROUTES = [cfg['_routes'][k] for k in cfg['_order']]
@@ -169,22 +214,7 @@ def render(cfg, out_path):
     d = ImageDraw.Draw(img)
 
     # projection (shared bounding box of every route in this collection)
-    def merc(a):
-        return np.radians(a[:, 1]), np.log(np.tan(np.pi / 4 + np.radians(a[:, 0]) / 2))
-
-    AX = np.concatenate([merc(r)[0] for r in ROUTES]); AY = np.concatenate([merc(r)[1] for r in ROUTES])
-    pad = 0.10
-    spanx = max(AX.max() - AX.min(), 1e-9); spany = max(AY.max() - AY.min(), 1e-9)
-    sc = min((BOX[2] - BOX[0]) / (spanx * (1 + pad)), (BOX[3] - BOX[1]) / (spany * (1 + pad)))
-    cx, cy = (AX.min() + AX.max()) / 2, (AY.min() + AY.max()) / 2
-    MX, MY = (BOX[0] + BOX[2]) / 2, (BOX[1] + BOX[3]) / 2
-
-    def P(lat, lon):
-        x = math.radians(lon); y = math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
-        return (MX + (x - cx) * sc, MY - (y - cy) * sc)
-
-    def PA(a):
-        X, Y = merc(a); return list(zip(MX + (X - cx) * sc, MY - (Y - cy) * sc))
+    P, PA = projection(ROUTES, BOX)
 
     # woodland (soft blobs along the routes)
     forest = Image.new('L', (W, H), 0); fd = ImageDraw.Draw(forest)

@@ -37,7 +37,7 @@ Every run produces exactly the same image — all random numbers have fixed seed
 |---|---|
 | `map_cover.py` | Finds the collections and builds each map, in layers from top to bottom. |
 | `icons.py` | The drawn icons: fox, lake, wind-turbine hill, cycle path, river, idyllic path, dill, mine, shark, house in the woods. |
-| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons — including manifest, service worker and app icon of the progressive web app. |
+| `build_site.py` | Builds the GitHub Page from the rendered maps: home, collections, icons — including the interactive layer over the map, manifest, service worker and app icon of the progressive web app. |
 | `gpx/<collection>/` | One folder per collection: the GPX exports and optionally a `collection.json`. Nothing runs without them. |
 | `out/` | The rendered PNGs. Not checked in. |
 | `site/` | The generated site. Not checked in. |
@@ -67,7 +67,8 @@ folder. It is optional, and so is every field in it:
   "subtitle": ["Runden rund um", "die Fuchskaute"],
 
   "routes": [
-    {"key": "FU", "file": "_____Fuchskaute___Ulmtalradweg.gpx"}
+    {"key": "FU", "file": "_____Fuchskaute___Ulmtalradweg.gpx",
+     "label": "Fuchskaute – Ulmtalradweg"}
   ],
   "rivers":     [{"route": "FU", "from": 20.5, "to": 23.5, "width": 5}],
   "highlights": [{"label": "Fuchskaute", "route": "FU", "km": 17.0,
@@ -86,10 +87,15 @@ on purpose; they are the content of the collection, not part of the code.
 | `title` | Lines of the cartouche in capitals. Empty list = no cartouche. |
 | `arrow` | Double arrow between two title lines. Default: on when there are exactly two. |
 | `subtitle` | Italic lines below the divider. |
-| `routes` | Order and keys of the GPX files. GPX files not listed are still drawn. |
+| `routes` | Order and keys of the GPX files, optionally a `label` — the tour name on the site. GPX files not listed are still drawn. |
 | `rivers` | River sections, derived from `route` plus the kilometre range `from`/`to`. |
 | `highlights` | Icon with a label, see below. |
 | `endpoints` | Start and finish with a fixed coordinate, icon and bar label. |
+
+The `label` of a tour only ever shows up on the site, never on the map. Without it
+the file name of the komoot export has to serve, and that one has lost its umlauts —
+`______ber_den_Knoten.gpx` becomes `ber den Knoten`. One line per tour is enough to
+avoid that.
 
 The cartouche grows with the number of lines and the width of the text while
 staying anchored in the bottom left — longer titles do not break it.
@@ -167,6 +173,25 @@ python3 build_site.py --png out --out site
 
 New icons and new collections show up on their own: `build_site.py` collects the
 collections via `discover()` and the icons via the signature `fn(d, x, y, s)`.
+
+### The map as an interactive layer
+
+On the subpage of a collection the cover image is not just a picture. Picking a
+tour — by clicking its line on the map or its entry under *Tours* — leaves that one
+tour alone in focus: everything else is covered with a sheet of paper, while the
+picked route, its highlights and both endpoints stay clear. Clicking again, a click
+next to it or `Esc` brings the whole collection back; hovering only shows a preview.
+The rows under *Highlights and endpoints* fade along with it, and the picked tour
+ends up in the address as `#tour-KN`, so a single tour can be linked to.
+
+What is dimmed is the drawn map itself, not a copy of it: an SVG lies over the PNG,
+its holes cut along the route. The positions come from the same projection as the
+renderer (`projection()` in `map_cover.py`, with the map frame scaled down by the
+supersampling), which is why the lines land exactly on the drawn ones.
+
+The image below stays untouched — *Download cover image (PNG)* gives out exactly
+the file from `out/`, with all tours on it, which is what komoot gets as the cover.
+Without JavaScript the page is what it was before: a map with a download link.
 
 ### The site as a progressive web app
 
